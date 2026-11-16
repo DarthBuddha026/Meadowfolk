@@ -1,0 +1,206 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #2b2340;
+  --color-ink-soft: #5a5170;
+  --color-paper: #fff8ec;
+  --color-paper-2: #f3e7d0;
+  --color-amber: #ffb020;
+  --color-sun: #ffd166;
+  --color-teal: #19b3a6;
+  --color-mint: #9ff3e8;
+  --color-gem: #8b5cf6;
+  --color-coral: #e8594a;
+  --font-display: var(--font-fredoka), ui-rounded, system-ui, sans-serif;
+  --font-body: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #d9ecf2;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+canvas {
+  touch-action: none;
+}
+
+@layer components {
+  /* Paper card — the HUD's single surface style */
+  .paper {
+    background: var(--color-paper);
+    border: 3px solid var(--color-ink);
+    border-radius: 18px;
+    box-shadow: 0 5px 0 var(--color-ink);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--color-ink);
+    background: var(--color-sun);
+    border: 3px solid var(--color-ink);
+    border-radius: 14px;
+    box-shadow: 0 4px 0 var(--color-ink);
+    padding: 0.6rem 1.2rem;
+    cursor: pointer;
+    transition: transform 80ms ease, box-shadow 80ms ease, background 150ms ease;
+    user-select: none;
+  }
+  .btn:hover {
+    background: #ffdf8a;
+  }
+  .btn:active {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 var(--color-ink);
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 4px 0 var(--color-ink);
+  }
+  .btn--ghost {
+    background: var(--color-paper);
+  }
+  .btn--ghost:hover {
+    background: #fff;
+  }
+  .btn--teal {
+    background: var(--color-mint);
+  }
+  .btn--teal:hover {
+    background: #c4fbf3;
+  }
+  .btn--icon {
+    padding: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 999px;
+  }
+
+  .key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.6rem;
+    height: 1.6rem;
+    padding: 0 0.4rem;
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-ink);
+    background: #fff;
+    border: 2px solid var(--color-ink);
+    border-radius: 7px;
+    box-shadow: 0 2px 0 var(--color-ink);
+  }
+
+  /* In-world floating labels (drei <Html>) */
+  .name-tag {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    white-space: nowrap;
+    color: var(--color-ink);
+    background: var(--color-paper);
+    border: 2px solid var(--color-ink);
+    border-radius: 999px;
+    padding: 2px 12px;
+    box-shadow: 0 2px 0 var(--color-ink);
+  }
+  .name-tag--locked {
+    background: #dfe5f2;
+    color: #4a5675;
+    font-size: 13px;
+  }
+
+  .evidence-row {
+    width: 100%;
+    text-align: left;
+    border: 2px solid transparent;
+    border-radius: 10px;
+    padding: 0.35rem 0.6rem;
+    transition: background 120ms ease, border-color 120ms ease;
+    cursor: pointer;
+  }
+  .evidence-row:hover {
+    background: #fff;
+    border-color: var(--color-ink);
+  }
+
+}
+
+/* Narrative loading — clouds drifting past, right to left (the flyer heads right) */
+@keyframes drift {
+  from {
+    transform: translateX(100vw);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+.cloud {
+  position: absolute;
+  background: #fff;
+  border-radius: 999px;
+  filter: blur(1px);
+  opacity: 0.9;
+  animation: drift linear infinite;
+}
+.cloud::before,
+.cloud::after {
+  content: '';
+  position: absolute;
+  background: #fff;
+  border-radius: 999px;
+}
+.cloud::before {
+  width: 55%;
+  height: 160%;
+  left: 15%;
+  bottom: 20%;
+}
+.cloud::after {
+  width: 40%;
+  height: 120%;
+  right: 12%;
+  bottom: 25%;
+}
+.float {
+  animation: float 2.6s ease-in-out infinite;
+}
+
+@keyframes gem-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+::selection {
+  background: var(--color-sun);
+}
