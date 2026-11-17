@@ -6,12 +6,10 @@ import { CylinderCollider, RigidBody, useRapier, type RapierCollider, type Rapie
 type Physics = ReturnType<typeof useRapier>;
 import type { KinematicCharacterController } from '@dimforge/rapier3d-compat';
 import type { Group } from 'three';
-import { getScript, PLAYER_SPAWN, RIDGE, VILLAGERS, WANDER, type VillagerPlan } from '@/game/data';
+import { PLAYER_SPAWN, RIDGE, VILLAGERS, WANDER, type VillagerPlan } from '@/game/data';
 import { distToPaths, groundHeight, isOpenGround } from '@/game/engine/terrain';
 import { playerState } from '@/game/engine/world-state';
-import { getMissionContext } from '@/game/state/mission-phase-machine';
 import { useSession } from '@/game/state/session-store';
-import { isNorthGateUp } from '@/game/state/use-mission';
 import { CharacterModel, type CharacterMotion } from './character-model';
 
 /**
@@ -45,8 +43,6 @@ const SPAWN_CLEAR = 5;
 const clearOfSpawn = (i: number) => Math.hypot(WANDER.nodes[i][0] - PLAYER_SPAWN[0], WANDER.nodes[i][1] - PLAYER_SPAWN[2]) > SPAWN_CLEAR;
 /** How close the hero has to be before a villager stops for them. */
 const STOP = 1.6;
-/** Within this of the hero during a conversation, villagers hold still (they would walk through the shot). */
-const STAGE_CLEAR = 9;
 /** How long a villager stops for the hero before carrying on (until the hero walks off and comes back). */
 const GREET = 2.5;
 /** How far right of a path's centre line villagers walk. */
@@ -120,7 +116,8 @@ function strollSpot(phys: Physics, id: string, x: number, z: number): [number, n
 const DESTS = WANDER.links.flatMap((ways, i) => (ways.length === 1 ? [i] : []));
 /** Network points on the north bank, past the ridge. */
 const onNorthBank = (i: number) => WANDER.nodes[i][1] < RIDGE.z[1] - 0.5;
-/** While the north gate is down, nobody goes up the north road (anyone already there may come back). */
+/** The farm past the ridge is private: villagers keep to the town (anyone already there may come back). */
+const isNorthGateUp = () => false;
 const intoClosedNorth = (a: number, b: number) => !onNorthBank(a) && onNorthBank(b) && !isNorthGateUp();
 /** Each villager's current destination (no two share one). */
 const claims = new Map<string, number>();
@@ -212,15 +209,13 @@ function Villager({ plan, index }: { plan: VillagerPlan; index: number }) {
     const pz = playerState.position.z - w.z;
     const session = useSession.getState();
     // The hero walking up: stop and look a moment (GREET seconds), then carry on past them.
-    const heroDist = session.map === 'junction' ? Math.hypot(px, pz) : Infinity;
+    const heroDist = Math.hypot(px, pz);
     if (heroDist > STOP + 1) w.met = 0;
     const near = heroDist < STOP && w.met < GREET;
     if (near) w.met += dt;
-    // During a conversation, those near it (the hero is on its stage) hold still so nobody walks through the shot.
-    // Everyone holds still before the game proper (title, hero setup, entering) and through a mission's
-    // opening dialogue, so the town only comes to life once the hero has arrived.
-    const intro = session.screen !== 'play' || session.dialogue?.treeId === getScript(getMissionContext().missionId).trees.entry;
-    const onStage = intro || (!!session.dialogue && session.map === 'junction' && Math.hypot(px, pz) < STAGE_CLEAR);
+    // Everyone holds still before the game proper (title, character setup), so the town only comes
+    // to life once the player has arrived.
+    const onStage = session.screen !== 'play';
 
     let target = 0;
     let face: number | null = null;

@@ -4,9 +4,23 @@
  * broadcast to subscribers.
  */
 
-export type InputAction = 'interact' | 'jump' | 'journal' | 'help' | 'escape' | 'advance';
+export type InputAction =
+  | 'interact'
+  | 'jump'
+  | 'use'
+  | 'help'
+  | 'escape'
+  | 'build'
+  | 'rotate'
+  | 'erase'
+  | 'undo'
+  | 'bag'
+  | 'chat'
+  | 'coop'
+  | 'slot';
 
-type Listener = (action: InputAction) => void;
+/** `n` is the hotbar slot (0-based) for 'slot'. */
+type Listener = (action: InputAction, n?: number) => void;
 
 const keys = new Set<string>();
 const listeners = new Set<Listener>();
@@ -26,9 +40,9 @@ function isTyping(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
 }
 
-function emit(action: InputAction) {
+function emit(action: InputAction, n?: number) {
   if (action === 'jump') jumpQueued = true;
-  listeners.forEach((l) => l(action));
+  listeners.forEach((l) => l(action, n));
 }
 
 function onKeyDown(e: KeyboardEvent) {
@@ -38,18 +52,43 @@ function onKeyDown(e: KeyboardEvent) {
   }
   keys.add(e.code);
   if (e.repeat) return;
+  if (/^Digit[1-9]$/.test(e.code)) return emit('slot', Number(e.code.slice(5)) - 1);
+  if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    return emit('undo');
+  }
   switch (e.code) {
     case 'KeyE':
-    case 'Enter':
       emit('interact');
+      break;
+    case 'KeyF':
+      emit('use');
       break;
     case 'Space':
       e.preventDefault();
       emit('jump');
-      emit('advance');
       break;
-    case 'KeyJ':
-      emit('journal');
+    case 'KeyB':
+      emit('build');
+      break;
+    case 'KeyR':
+      emit('rotate');
+      break;
+    case 'KeyX':
+      emit('erase');
+      break;
+    case 'KeyI':
+    case 'Tab':
+      e.preventDefault();
+      emit('bag');
+      break;
+    case 'KeyT':
+    case 'Enter':
+      e.preventDefault();
+      emit('chat');
+      break;
+    case 'KeyC':
+      emit('coop');
       break;
     case 'KeyH':
       emit('help');
@@ -93,8 +132,8 @@ export function onInputAction(listener: Listener): () => void {
 }
 
 /** Fire an action from on-screen controls. */
-export function triggerAction(action: InputAction) {
-  emit(action);
+export function triggerAction(action: InputAction, n?: number) {
+  emit(action, n);
 }
 
 const pressed = (codes: string[]) => codes.some((c) => keys.has(c));

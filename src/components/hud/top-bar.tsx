@@ -1,117 +1,166 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { getHero, getMissionById, getRoleLabel } from '@/game/data';
+import { getLook } from '@/game/data';
 import { playSound } from '@/game/engine/sound';
-import { getObjective } from '@/game/state/mission-director';
-import { useProfile } from '@/game/state/profile-store';
-import { useSession } from '@/game/state/session-store';
-import { useMissionContext, useMissionPhase } from '@/game/state/use-mission';
+import { amHost, cropLabel, devSetTime, devToggleFreeze, seasonName } from '@/game/state/director';
+import { clockText, useClock, useFarmState } from '@/game/state/farm-store';
+import { isDevName, useProfile } from '@/game/state/profile-store';
+import { useSession, type PanelId } from '@/game/state/session-store';
 import { useIsTouch } from './controls';
 import { Minimap } from './minimap';
+import { Gold } from './panels';
 
-export function GemIcon({ size = 20, color = '#8b5cf6' }: { size?: number; color?: string }) {
+function Clock() {
+  const minute = useClock((s) => Math.floor(s.minute / 10) * 10);
+  const farm = useFarmState();
+  const frozen = useSession((s) => s.frozen);
+  if (!farm) return null;
+  const hour = 6 + minute / 60;
+  const icon = hour < 7 ? '🌅' : hour < 18 ? '☀️' : hour < 20 ? '🌇' : '🌙';
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <path d="M12 2 L21 9 L12 22 L3 9 Z" fill={color} stroke="#2b2340" strokeWidth="2" strokeLinejoin="round" />
-      <path d="M3 9 H21 M12 2 L8 9 L12 22 L16 9 Z" fill="none" stroke="#2b2340" strokeWidth="1.2" opacity="0.5" />
-    </svg>
+    <div className="paper px-3 py-2 leading-tight">
+      <p className="font-display text-[10px] font-semibold tracking-[0.2em] text-teal">
+        {seasonName(farm.season).toUpperCase()} {farm.day} · YEAR {farm.year}
+      </p>
+      <p className="font-display text-xl font-semibold">
+        {icon} {clockText(minute)}
+        {frozen && <span title="Time is frozen"> ❄</span>}
+      </p>
+      {hour >= 24 && <p className="text-xs font-bold text-coral">Getting late — find your bed!</p>}
+    </div>
+  );
+}
+
+/** The DEV account's tools: jump to morning, noon or night, and freeze the clock. */
+const DEV_TIMES: [string, number][] = [
+  ['6 AM', 0],
+  ['12 NN', 360],
+  ['9 PM', 900],
+];
+
+function DevTools() {
+  const name = useProfile((s) => s.name);
+  const frozen = useSession((s) => s.frozen);
+  const visiting = useSession((s) => s.net.status === 'visiting');
+  if (!isDevName(name)) return null;
+  const small = 'btn px-2 py-1 text-xs';
+  return (
+    <div className="paper pointer-events-auto px-3 py-2">
+      <p className="font-display text-[10px] font-semibold tracking-[0.2em] text-coral">DEV · ∞ GOLD</p>
+      {visiting ? (
+        <p className="mt-1 text-xs font-bold text-ink-soft">Time is the host’s while visiting.</p>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {DEV_TIMES.map(([label, minute]) => (
+            <button key={label} className={`${small} btn--ghost`} onClick={() => devSetTime(minute)}>
+              {label}
+            </button>
+          ))}
+          <button className={`${small} ${frozen ? '' : 'btn--ghost'}`} onClick={devToggleFreeze} title={frozen ? 'Let time run again' : 'Stop the clock'}>
+            {frozen ? '▶ Unfreeze' : '❄ Freeze'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What's on the tile you face. */
+function TileHint() {
+  const target = useSession((s) => s.target);
+  const farm = useFarmState();
+  const label = farm && target ? cropLabel(farm, target[0], target[1]) : null;
+  return (
+    <AnimatePresence>
+      {label && (
+        <motion.p
+          key={label}
+          className="paper px-3 py-1 text-sm font-bold"
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          {label}
+        </motion.p>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function IconButton({ title, panel, children }: { title: string; panel: PanelId; children: React.ReactNode }) {
+  const openPanel = useSession((s) => s.openPanel);
+  return (
+    <button
+      className="btn btn--ghost btn--icon"
+      title={title}
+      onClick={() => {
+        playSound('open');
+        openPanel(panel);
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
 export function TopBar() {
-  const phase = useMissionPhase();
-  const clues = useMissionContext((c) => c.discoveredClues.length);
-  const missionId = useMissionContext((c) => c.missionId);
-  const { heroId, heroName, role, gems, muted, toggleMuted } = useProfile();
-  const gemCollected = useSession((s) => s.gemCollected);
-  const openPanel = useSession((s) => s.openPanel);
-  const hero = getHero(heroId);
+  const { name, look, gold, muted, toggleMuted } = useProfile();
   const touch = useIsTouch();
-  const map = useSession((s) => s.map); // objective text depends on which map you are on, too
-  const objective = getObjective(phase, clues, gemCollected);
+  const net = useSession((s) => s.net);
+  const farm = useFarmState();
+  const l = getLook(look);
+  const visiting = net.status === 'visiting';
+  const indoors = useSession((s) => s.indoors);
 
   return (
     <>
-      {/* Currently playing as — bottom right, lifted clear of the touch buttons */}
       <div className={`paper pointer-events-auto fixed right-3 z-30 flex items-center gap-3 px-3 py-2 sm:right-4 ${touch ? 'bottom-28' : 'bottom-4'}`}>
-        <span
-          className="h-9 w-9 shrink-0 rounded-full border-3 border-ink"
-          style={{ background: `linear-gradient(135deg, ${hero.palette.outfit} 55%, ${hero.palette.accent} 55%)` }}
-        />
+        <span className="h-9 w-9 shrink-0 rounded-full border-3 border-ink" style={{ background: `linear-gradient(135deg, ${l.swatch[0]} 55%, ${l.swatch[1]} 55%)` }} />
         <div className="leading-tight">
-          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-ink-soft">Playing as</p>
-          <p className="font-display text-base font-semibold">{heroName}</p>
-          <p className="text-xs font-bold text-ink-soft">
-            {hero.name} · {getRoleLabel(role)}
-          </p>
+          <p className="font-display text-base font-semibold">{name}</p>
+          <p className="text-xs font-bold text-ink-soft">{visiting ? `Visiting ${farm?.ownerName}` : amHost() ? farm?.name : ''}</p>
         </div>
       </div>
       <div className="pointer-events-none fixed inset-x-0 top-0 z-30 flex items-start justify-between gap-3 p-3 sm:p-4">
-        <div className="flex flex-col items-start gap-3">
-          {map === 'junction' && <Minimap />}
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={missionId + objective}
-              className="paper max-w-[min(80vw,340px)] px-3 py-2"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25 }}
-            >
-              <p className="font-display text-[10px] font-semibold tracking-[0.2em] text-teal">{getMissionById(missionId)?.shortName}</p>
-              <p className="text-sm font-bold">◆ {objective}</p>
-            </motion.div>
-          </AnimatePresence>
+        <div className="flex flex-col items-start gap-2">
+          {!indoors && <Minimap />}
+          <Clock />
+          <DevTools />
+          <TileHint />
         </div>
-
-        <div className="pointer-events-auto flex items-center gap-2">
-          <div className="paper flex h-11 items-center gap-1.5 px-3" title="Insight Gems">
-            <GemIcon />
-            <span className="font-display text-lg font-semibold">{gems.length}</span>
+        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
+          <div className="paper flex h-11 items-center px-3" title="Your gold">
+            {isDevName(name) ? (
+              <span className="font-display text-lg font-semibold" title="DEV: infinite gold">
+                ∞g
+              </span>
+            ) : (
+              <Gold n={gold} className="text-lg" />
+            )}
           </div>
-          <button
-            className="btn btn--ghost btn--icon"
-            title="Evidence journal (J)"
-            onClick={() => {
-              playSound('open');
-              openPanel('journal');
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2b2340" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-              <path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" />
-              <path d="M9 9h6M9 13h4" />
-            </svg>
-          </button>
+          <IconButton title="Play together (C)" panel="coop-play">
+            <span className="font-display text-sm font-bold">{net.status === 'offline' ? '👥' : `👥${net.players.length}`}</span>
+          </IconButton>
+          <IconButton title="Your bag (I)" panel="bag">
+            <span aria-hidden>🎒</span>
+          </IconButton>
           <button className="btn btn--ghost btn--icon" title={muted ? 'Unmute' : 'Mute'} onClick={toggleMuted}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2b2340" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M4 9h4l5-4v14l-5-4H4z" fill="#2b2340" />
               {muted ? <path d="M17 9l5 6M22 9l-5 6" /> : <path d="M17 8a5 5 0 0 1 0 8M19.5 5.5a8.5 8.5 0 0 1 0 13" />}
             </svg>
           </button>
-          <button
-            className="btn btn--ghost btn--icon font-display text-lg"
-            title="Controls (H)"
-            onClick={() => {
-              playSound('open');
-              openPanel('help');
-            }}
-          >
-            ?
-          </button>
-          <button
-            className="btn btn--ghost btn--icon"
-            title="Pause (Esc)"
-            onClick={() => {
-              playSound('open');
-              openPanel('pause');
-            }}
-          >
+          <IconButton title="How to play (H)" panel="help">
+            <span className="font-display text-lg">?</span>
+          </IconButton>
+          <IconButton title="Pause (Esc)" panel="pause">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="#2b2340" aria-hidden>
               <rect x="6" y="5" width="4" height="14" rx="1.2" />
               <rect x="14" y="5" width="4" height="14" rx="1.2" />
             </svg>
-          </button>
+          </IconButton>
         </div>
       </div>
     </>

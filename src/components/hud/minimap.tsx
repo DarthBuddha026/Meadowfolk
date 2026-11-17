@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { CLUBHOUSE_EXTERIOR, FARM, GREENHOUSE_EXTERIOR, HOUSES, MISSIONS, RIDGE, TERRAIN, type Pt } from '@/game/data';
+import { CARPENTER_HOUSE, FARM, HOUSES, SHOP_SPOTS, TERRAIN, type Pt } from '@/game/data';
+import { GRID } from '@/game/sim/farm-map';
 import { getTerrain } from '@/game/engine/terrain';
 import { playerState } from '@/game/engine/world-state';
-import { useMissionContext, useNorthBankOpen } from '@/game/state/use-mission';
 
 /** Pixels per metre on the pre-drawn Junction bitmap, and metres from the hero to the map's edge. */
 const PX = 10;
@@ -12,16 +12,17 @@ const VIEW_RADIUS = 15;
 const SIZE = 172;
 
 /**
- * Junction drawn once, top-down, north up (−z), into an offscreen canvas. Until the north bank
- * opens, it lies under cloud past the ridge.
+ * The world drawn once, top-down, north up (−z), into an offscreen canvas: the town, the river
+ * and the farm on the north bank.
  */
-function drawJunction(northOpen: boolean): HTMLCanvasElement {
-  const { extent, rimInner } = TERRAIN;
+function drawJunction(): HTMLCanvasElement {
+  const { extent } = TERRAIN;
+  const terrain = getTerrain();
   const c = document.createElement('canvas');
-  c.width = extent.x * 2 * PX;
-  c.height = (extent.north + extent.z) * PX;
+  c.width = (extent.west + extent.east) * PX;
+  c.height = (extent.north + extent.south) * PX;
   const g = c.getContext('2d')!;
-  g.setTransform(PX, 0, 0, PX, extent.x * PX, extent.north * PX);
+  g.setTransform(PX, 0, 0, PX, extent.west * PX, extent.north * PX);
   g.lineCap = 'round';
   g.lineJoin = 'round';
   const line = (pts: Pt[]) => {
@@ -29,15 +30,19 @@ function drawJunction(northOpen: boolean): HTMLCanvasElement {
     pts.forEach(([x, z], i) => (i ? g.lineTo(x, z) : g.moveTo(x, z)));
   };
 
-  g.fillStyle = '#8fbf62';
-  g.fillRect(-extent.x, -extent.north, extent.x * 2, extent.north + extent.z);
-  g.fillStyle = '#a9d47f';
-  g.fillRect(-rimInner.x, -rimInner.north, rimInner.x * 2, rimInner.north + rimInner.z);
-  // The ridge, either side of its cutting.
-  g.fillStyle = '#8fbf62';
-  const [rz0, rz1] = RIDGE.z;
-  g.fillRect(-rimInner.x, rz0, RIDGE.cut.x - RIDGE.cut.half + rimInner.x, rz1 - rz0);
-  g.fillRect(RIDGE.cut.x + RIDGE.cut.half, rz0, rimInner.x - RIDGE.cut.x - RIDGE.cut.half, rz1 - rz0);
+  // The sea all round; then the land's own outlines: grass, the beaches' sand, the rim and ridge.
+  g.fillStyle = '#7cc7d6';
+  g.fillRect(-extent.west, -extent.north, extent.west + extent.east, extent.north + extent.south);
+  const fillLoops = (loops: Pt[][], color: string) => {
+    g.fillStyle = color;
+    g.beginPath();
+    for (const l of loops) l.forEach(([x, z], i) => (i ? g.lineTo(x, z) : g.moveTo(x, z)));
+    g.closePath();
+    g.fill('evenodd');
+  };
+  fillLoops(terrain.land, '#a9d47f');
+  fillLoops(terrain.beach, '#f1dfb0');
+  fillLoops(terrain.rim, '#8fbf62');
   g.strokeStyle = '#7cc7d6';
   g.lineWidth = TERRAIN.river.halfWidth * 2;
   line(TERRAIN.river.points);
@@ -71,7 +76,7 @@ function drawJunction(northOpen: boolean): HTMLCanvasElement {
   g.fillRect(FARM.x - FARM.w / 2, FARM.z - FARM.d / 2, FARM.w, FARM.d);
 
   g.fillStyle = '#5f8f3c';
-  for (const t of getTerrain().scatter.trees) {
+  for (const t of terrain.scatter.trees) {
     g.beginPath();
     g.arc(t.x, t.z, 0.75 * t.s, 0, Math.PI * 2);
     g.fill();
@@ -89,32 +94,24 @@ function drawJunction(northOpen: boolean): HTMLCanvasElement {
     g.restore();
   };
   for (const h of HOUSES) building(h.x, h.z, h.w, h.d, h.rot, h.roof);
-  const c2 = CLUBHOUSE_EXTERIOR;
+  const c2 = CARPENTER_HOUSE;
   building(c2.x, c2.z, c2.w, c2.d, 0, c2.roof);
-  const gh = GREENHOUSE_EXTERIOR;
-  building(gh.x, gh.z, gh.w, gh.d, 0, '#c9eef5');
 
-  if (!northOpen) {
-    g.fillStyle = '#e4e8e3';
-    g.fillRect(-extent.x, -extent.north, extent.x * 2, extent.north + RIDGE.z[0]);
-    g.strokeStyle = '#9aa39a';
-    g.lineWidth = 0.35;
-    g.setLineDash([0.8, 0.6]);
-    line([[-extent.x, RIDGE.z[0]], [extent.x, RIDGE.z[0]]]);
-    g.stroke();
-    g.setLineDash([]);
-  }
+  // The farm grid: a dashed outline on the north bank.
+  g.strokeStyle = '#8a6a3f';
+  g.lineWidth = 0.35;
+  g.setLineDash([0.8, 0.6]);
+  g.strokeRect(GRID.x0, GRID.z0, GRID.cols * GRID.cell, GRID.rows * GRID.cell);
+  g.setLineDash([]);
   return c;
 }
 
 /**
  * Round minimap, north up and centred on the hero, with an arrow for the way they face.
- * Junction only — the HUD hides it indoors.
+ * Gold dots mark the shops; the dashed box is the farm.
  */
 export function Minimap() {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const missionId = useMissionContext((c) => c.missionId);
-  const northOpen = useNorthBankOpen();
 
   useEffect(() => {
     const el = canvas.current;
@@ -123,7 +120,7 @@ export function Minimap() {
     el.width = SIZE * dpr;
     el.height = SIZE * dpr;
     const g = el.getContext('2d')!;
-    const junction = drawJunction(northOpen);
+    const junction = drawJunction();
     const scale = SIZE / 2 / VIEW_RADIUS;
     let raf = 0;
 
@@ -143,22 +140,21 @@ export function Minimap() {
 
       g.fillStyle = '#7cc7d6';
       g.fillRect(x - VIEW_RADIUS, z - VIEW_RADIUS, VIEW_RADIUS * 2, VIEW_RADIUS * 2);
-      g.drawImage(junction, -TERRAIN.extent.x, -TERRAIN.extent.north, TERRAIN.extent.x * 2, TERRAIN.extent.north + TERRAIN.extent.z);
-      // Help signals: the current mission's pulses gold (pinned to the rim when out of range), the rest wait in grey.
-      const pulse = 0.7 + Math.sin(t / 220) * 0.3;
-      for (const m of [...MISSIONS].sort((a, b) => Number(a.id === missionId) - Number(b.id === missionId))) {
-        let [sx, , sz] = m.signalPosition;
-        const current = m.id === missionId;
-        if (!northOpen && sz < RIDGE.z[0]) continue;   // under the cloud
+      const { extent } = TERRAIN;
+      g.drawImage(junction, -extent.west, -extent.north, extent.west + extent.east, extent.north + extent.south);
+      // The shops: a gold dot at each counter (pinned to the rim when out of range).
+      const pulse = 0.85 + Math.sin(t / 300) * 0.15;
+      for (const spot of Object.values(SHOP_SPOTS)) {
+        let [sx, sz] = spot.counter;
         const far = Math.hypot(sx - x, sz - z);
         const edge = VIEW_RADIUS - 1.4;
-        if (current && far > edge) {
+        if (far > edge) {
           sx = x + ((sx - x) / far) * edge;
           sz = z + ((sz - z) / far) * edge;
         }
         g.beginPath();
-        g.arc(sx, sz, current ? 0.9 * pulse + 0.4 : 0.55, 0, Math.PI * 2);
-        g.fillStyle = current ? '#ffd166' : '#9a93ab';
+        g.arc(sx, sz, 0.75 * pulse, 0, Math.PI * 2);
+        g.fillStyle = '#ffd166';
         g.fill();
         g.lineWidth = 0.25;
         g.strokeStyle = '#2b2340';
@@ -183,7 +179,7 @@ export function Minimap() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [missionId, northOpen]);
+  }, []);
 
   return (
     <div className="paper pointer-events-auto relative shrink-0 overflow-hidden rounded-full" style={{ width: SIZE + 6, height: SIZE + 6 }}>

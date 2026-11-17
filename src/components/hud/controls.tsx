@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { setJoystick, setRunToggle, triggerAction } from '@/game/engine/input';
-import { getInteractLabel, interact } from '@/game/state/mission-director';
+import { applyTool, interact } from '@/game/state/director';
 import { useSession } from '@/game/state/session-store';
 
 export function useIsTouch() {
@@ -18,10 +18,10 @@ export function useIsTouch() {
   return touch;
 }
 
-/** "[E] Talk to Sarah" — shown when standing near something useful. */
+/** "[E] Shop at the General Store" — shown when standing near something useful. */
 export function InteractPrompt() {
-  const nearby = useSession((s) => s.nearbyId);
-  const blocked = useSession((s) => !!s.dialogue || !!s.panel || !!s.shot || !!s.transition);
+  const nearby = useSession((s) => s.nearby);
+  const blocked = useSession((s) => !!s.panel || s.build.on || !!s.fade || !!s.transition);
   const touch = useIsTouch();
   const show = nearby && !blocked;
 
@@ -29,17 +29,17 @@ export function InteractPrompt() {
     <AnimatePresence>
       {show && (
         <motion.button
-          key={nearby}
-          className="paper fixed bottom-6 left-1/2 z-30 flex items-center gap-2 px-4 py-2 font-display text-lg font-semibold"
+          key={nearby.id}
+          className="paper fixed bottom-40 left-1/2 z-30 flex items-center gap-2 px-4 py-2 font-display text-lg font-semibold sm:bottom-24"
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 16 }}
           transition={{ duration: 0.2 }}
-          onClick={() => interact(nearby)}
+          onClick={() => interact(nearby.id)}
           style={{ x: '-50%' }}
         >
           {!touch && <span className="key">E</span>}
-          {getInteractLabel(nearby)}
+          {nearby.label}
         </motion.button>
       )}
     </AnimatePresence>
@@ -98,13 +98,11 @@ function Joystick() {
 export function MobileControls() {
   const touch = useIsTouch();
   const [run, setRun] = useState(false);
-  const locked = useSession((s) => !!s.panel || !!s.shot);
-  const inDialogue = useSession((s) => !!s.dialogue);
+  const locked = useSession((s) => !!s.panel || s.build.on);
 
   useEffect(() => () => setRunToggle(false), []);
 
   if (!touch || locked) return null;
-  if (inDialogue) return null;
 
   return (
     <>
@@ -119,8 +117,11 @@ export function MobileControls() {
         >
           RUN
         </button>
-        <button className="btn btn--icon btn--teal h-16 w-16 text-sm" onClick={() => triggerAction('jump')}>
+        <button className="btn btn--icon btn--ghost h-12 w-12 text-xs" onClick={() => triggerAction('jump')}>
           JUMP
+        </button>
+        <button className="btn btn--icon btn--teal h-16 w-16 text-sm" onClick={applyTool}>
+          USE
         </button>
       </div>
     </>

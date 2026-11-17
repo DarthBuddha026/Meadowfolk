@@ -1,5 +1,6 @@
-import { CLEAR_ZONES, FARM, HOUSES, MEADOW, ORCHARD, RIDGE, SIGNPOSTS, TERRAIN, type Pt } from '@/game/data/terrain-plan';
-import { GREENHOUSE_EXTERIOR } from '@/game/data/world-layout';
+import { CLEAR_ZONES, FARM, FORESTS, HOUSES, RIDGE, SIGNPOSTS, TERRAIN, type Pt } from '@/game/data/terrain-plan';
+import { GREEN_LOT } from '@/game/data/world-layout';
+import { GRID, ORCHARD_TREES, tileCenter } from '@/game/sim/farm-map';
 
 /**
  * Terrain engine — turns the authored terrain plan into:
@@ -22,6 +23,8 @@ export interface ScatterItem {
 
 export interface TerrainData {
   land: Loop[];
+  /** The sand of the beaches, down to the waterline. */
+  beach: Loop[];
   rim: Loop[];
   paths: Loop[];
   waterColliders: { x: number; z: number; hx: number; hz: number }[];
@@ -102,10 +105,31 @@ function inHouse(x: number, z: number, margin: number) {
  * the ridge narrows by `margin` too).
  */
 export function inWalkableArea(x: number, z: number, margin = 0) {
-  const { rimInner } = TERRAIN;
-  if (Math.abs(x) >= rimInner.x - margin || z >= rimInner.z - margin || z <= -rimInner.north + margin) return false;
-  return !(z > RIDGE.z[0] - margin && z < RIDGE.z[1] + margin && Math.abs(x - RIDGE.cut.x) >= RIDGE.cut.half - margin);
+  const { rimInner, beach } = TERRAIN;
+  if (x <= -rimInner.west + margin || x >= rimInner.east - margin || z <= -rimInner.north + margin || z >= beach.shore - 0.8 - margin) return false;
+  return !onRidge(x, z, margin);
 }
+
+/** The ridge between the river and the farm (west of the river's turn), except its cutting. */
+function onRidge(x: number, z: number, margin = 0) {
+  return z > RIDGE.z[0] - margin && z < RIDGE.z[1] + margin && x < RIDGE.east + margin && Math.abs(x - RIDGE.cut.x) >= RIDGE.cut.half - margin;
+}
+
+/** Where the grass gives way to the beach's sand (a gentle wave across the map). */
+export function beachEdge(x: number) {
+  return TERRAIN.beach.from + Math.sin(x * 0.31) * 0.7 + Math.sin(x * 0.12 + 1) * 0.5;
+}
+
+/** The waterline, where the beach meets the ocean. */
+export function shoreAt(x: number) {
+  return TERRAIN.beach.shore + Math.sin(x * 0.19 + 0.5) * 0.6 + Math.sin(x * 0.07) * 0.4;
+}
+
+/** On the beach's sand. */
+export const isBeach = (x: number, z: number) => z >= beachEdge(x) && z < shoreAt(x);
+
+/** In one of the thick woods (round the statue, behind the town hall). */
+export const inForest = (x: number, z: number) => FORESTS.some((f) => x > f.x0 && x < f.x1 && z > f.z0 && z < f.z1);
 
 /** Open ground a villager can stroll to: inside the rim, clear of the river, the pond, houses and the farm. */
 export function isOpenGround(x: number, z: number) {
@@ -122,11 +146,16 @@ export function isOpenGround(x: number, z: number) {
 const clearOfSignposts = (gap: number) => (p: { x: number; z: number }) => SIGNPOSTS.every((s) => Math.hypot(p.x - s.x, p.z - s.z) > gap);
 
 /**
- * Keeps small props off the greenhouse floor. Applied after scattering, so the random
- * layout of everything else stays exactly as it was before the greenhouse existed.
+ * Keeps small props off the empty lot. Applied after scattering, so the random layout of
+ * everything else stays exactly as it was.
  */
 const offGreenhouse = (p: { x: number; z: number }) =>
-  Math.abs(p.x - GREENHOUSE_EXTERIOR.x) > GREENHOUSE_EXTERIOR.w / 2 + 0.5 || Math.abs(p.z - GREENHOUSE_EXTERIOR.z) > GREENHOUSE_EXTERIOR.d / 2 + 0.5;
+  Math.abs(p.x - GREEN_LOT.x) > GREEN_LOT.w / 2 + 0.5 || Math.abs(p.z - GREEN_LOT.z) > GREEN_LOT.d / 2 + 0.5;
+
+/** On (or within `margin` of) the farm grid, which stays clear for crops and building. */
+export function onFarmGrid(x: number, z: number, margin = 0) {
+  return x > GRID.x0 - margin && x < GRID.x0 + GRID.cols * GRID.cell + margin && z > GRID.z0 - margin && z < GRID.z0 + GRID.rows * GRID.cell + margin;
+}
 
 function inClearZone(x: number, z: number, extra = 0) {
   return CLEAR_ZONES.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r + extra);
@@ -145,10 +174,10 @@ function onBridge(x: number, z: number, margin = 0) {
 }
 
 /** The raised rim round the island, and the ridge between the river and the north bank (but not its cutting). */
-function isRim(x: number, z: number) {
+export function isRim(x: number, z: number) {
   const { rimInner } = TERRAIN;
-  if (Math.abs(x) > rimInner.x || z > rimInner.z || z < -rimInner.north) return true;
-  return z > RIDGE.z[0] && z < RIDGE.z[1] && Math.abs(x - RIDGE.cut.x) >= RIDGE.cut.half;
+  if (x < -rimInner.west || x > rimInner.east || z < -rimInner.north) return true;
+  return onRidge(x, z);
 }
 
 /* ------------------------------------------------------------------ */
@@ -222,9 +251,9 @@ interface Grid {
 function makeGrid(): Grid {
   const { extent, cell } = TERRAIN;
   return {
-    nx: Math.round((extent.x * 2) / cell),
-    nz: Math.round((extent.north + extent.z) / cell),
-    x0: -extent.x,
+    nx: Math.round((extent.west + extent.east) / cell),
+    nz: Math.round((extent.north + extent.south) / cell),
+    x0: -extent.west,
     z0: -extent.north,
     cell,
   };
@@ -542,26 +571,13 @@ const southOfRidge = (pts: readonly Pt[]) => pts.every(([, z]) => z > RIDGE.z[1]
 const clearOfCutting = (p: { x: number; z: number }) =>
   Math.abs(p.x - RIDGE.cut.x) > RIDGE.cut.half + 1 || p.z < RIDGE.z[0] - 1 || p.z > RIDGE.z[1] + 0.5;
 
-/** The orchard's apple trees, in staggered rows. */
+/** The old apple trees in the orchard parcel, each standing on its own farm tile. */
 function orchardTrees(): ScatterItem[] {
-  const out: ScatterItem[] = [];
-  for (let r = 0; r < ORCHARD.rows; r++) {
-    for (let c = 0; c < ORCHARD.cols; c++) {
-      out.push({
-        x: ORCHARD.x + (c - (ORCHARD.cols - 1) / 2 + (r % 2 ? 0.5 : 0) - 0.25) * ORCHARD.gap,
-        z: ORCHARD.z + (r - (ORCHARD.rows - 1) / 2) * ORCHARD.gap,
-        y: 0,
-        s: 0.85 + ((r * 7 + c * 3) % 4) * 0.05,
-        rot: r * 1.3 + c * 2.1,
-        v: (r + c) % 3,
-      });
-    }
-  }
-  return out;
+  return ORCHARD_TREES.map(([c, r], i) => {
+    const [x, z] = tileCenter(c, r);
+    return { x, z, y: 0, s: 0.62 + (i % 3) * 0.04, rot: i * 1.7, v: i % 3 };
+  });
 }
-
-const inOrchard = (x: number, z: number, margin: number) =>
-  Math.abs(x - ORCHARD.x) < (ORCHARD.cols / 2 + 0.25) * ORCHARD.gap + margin && Math.abs(z - ORCHARD.z) < (ORCHARD.rows / 2) * ORCHARD.gap + margin;
 
 let cached: TerrainData | null = null;
 
@@ -571,10 +587,13 @@ export function getTerrain(): TerrainData {
   const { river, extent } = TERRAIN;
 
   const isWater = (x: number, z: number) => distToRiver(x, z) < river.halfWidth;
-  const land = buildMask(g, (x, z) => !isWater(x, z));
-  const rim = buildMask(g, (x, z) => !isWater(x, z) && isRim(x, z));
-  const paths = buildMask(g, (x, z) => !isWater(x, z) && !isRim(x, z) && distToPaths(x, z) < 0);
-  const water = buildMask(g, (x, z) => isWater(x, z) && !onBridge(x, z, -0.15));
+  const land = buildMask(g, (x, z) => !isWater(x, z) && z < beachEdge(x));
+  const sand = buildMask(g, (x, z) => !isWater(x, z) && isBeach(x, z));
+  const rim = buildMask(g, (x, z) => !isWater(x, z) && isRim(x, z) && z < beachEdge(x));
+  const paths = buildMask(g, (x, z) => !isWater(x, z) && !isRim(x, z) && distToPaths(x, z) < 0 && z < beachEdge(x) + 1.2);
+  const water = buildMask(g, (x, z) => isWater(x, z) && !onBridge(x, z, -0.15) && z < shoreAt(x));
+  /** Props stay on the grass, off the beach (and rim trees only on the rim as it is now). */
+  const onGrass = (p: ScatterItem) => p.z < beachEdge(p.x) - 0.6 && (p.y === 0 || isRim(p.x, p.z));
 
   const lanterns = lanternsAlongPaths().filter(clearOfSignposts(1.3));
   const coreRim = (x: number, z: number) => Math.abs(x) > CORE.rimX || Math.abs(z) > CORE.rimZ;
@@ -598,46 +617,78 @@ export function getTerrain(): TerrainData {
   const north = dress(
     mulberry32(29),
     {
-      box: { cx: 0, cz: (northZ - extent.north + 0.8) / 2, hx: extent.x - 0.8, hz: (northZ + extent.north - 0.8) / 2 },
-      interior: (x, z) => z < northZ && !isRim(x, z) && !inOrchard(x, z, 0.6),
-      rim: (x, z) => z < northZ && isRim(x, z) && Math.abs(x) < extent.x - 0.9 && z > -extent.north + 0.9,
+      box: { cx: -0.4, cz: (northZ - extent.north + 0.8) / 2, hx: 25, hz: (northZ + extent.north - 0.8) / 2 },
+      interior: (x, z) => z < northZ && x < RIDGE.east && !isRim(x, z) && !onFarmGrid(x, z, 0.4),
+      rim: (x, z) => z < northZ && x < RIDGE.east && isRim(x, z) && x > -extent.west + 0.9 && z > -extent.north + 0.9,
       paths: TERRAIN.paths,
       walkways: TERRAIN.walkways,
       near: [...core.trees, ...orchard],
-      count: { trees: 34, rimTrees: 24, pathHedges: 14, bushes: 22, flowers: 110, tufts: 150, rocks: 0, lilies: 0, cattails: 0 },
+      count: { trees: 4, rimTrees: 26, pathHedges: 2, bushes: 6, flowers: 30, tufts: 40, rocks: 0, lilies: 0, cattails: 0 },
     },
     lanterns
   );
-  // A wildflower meadow in the east corner, thick with flowers.
-  const meadowRand = mulberry32(47);
-  const meadow = scatter(
-    meadowRand,
-    { cx: MEADOW.x, cz: MEADOW.z, hx: MEADOW.r, hz: MEADOW.r },
-    70,
-    0.5,
-    (x, z) => Math.hypot(x - MEADOW.x, z - MEADOW.z) < MEADOW.r && inWalkableArea(x, z, 0.4) && distToPaths(x, z) > 0.4 && !inHouse(x, z, 0.4),
-    () => ({ s: 0.75 + meadowRand() * 0.6 }),
-    [...north.trees, ...north.hedges]
-  );
 
-  const trees = [...core.trees.filter(clearOfCutting), ...north.trees, ...orchard];
+  // (The orchard's apple trees are farm trees now — see FarmTrees — so they can be chopped.)
+  // East of the river: each region its own seed. The woods are thick; the town hall's lawns open.
+  const eastPaths = TERRAIN.paths;
+  const forest = dress(
+    mulberry32(41),
+    {
+      box: { cx: 50.5, cz: -25.5, hx: 26.3, hz: 15.3 },
+      interior: (x, z) => x > RIDGE.east + 0.4 && z < -11 && inWalkableArea(x, z) && !onFarmGrid(x, z, 1),
+      rim: (x, z) => isRim(x, z) && z < -11 && x > RIDGE.east && x < extent.east - 0.9 && z > -extent.north + 0.9,
+      paths: eastPaths,
+      walkways: TERRAIN.walkways,
+      near: [...north.trees],
+      count: { trees: 150, rimTrees: 34, pathHedges: 6, bushes: 34, flowers: 90, tufts: 130, rocks: 12, lilies: 0, cattails: 8 },
+    },
+    lanterns
+  );
+  const eastTown = dress(
+    mulberry32(53),
+    {
+      box: { cx: 53, cz: 4, hx: 24, hz: 16 },
+      interior: (x, z) => x > 29 && z > -11 && z < beachEdge(x) - 1 && inWalkableArea(x, z) && !inForest(x, z),
+      rim: (x, z) => isRim(x, z) && x > 29 && z > -11 && z < beachEdge(x) - 0.5 && x < extent.east - 0.9,
+      paths: eastPaths,
+      walkways: TERRAIN.walkways,
+      near: [...forest.trees],
+      count: { trees: 10, rimTrees: 16, pathHedges: 10, bushes: 16, flowers: 90, tufts: 110, rocks: 10, lilies: 6, cattails: 8 },
+    },
+    lanterns
+  );
+  const backWood = dress(
+    mulberry32(67),
+    {
+      box: { cx: 68.5, cz: 4, hx: 7.5, hz: 15 },
+      interior: (x, z) => inForest(x, z) && z > -11 && z < beachEdge(x) - 1.5 && inWalkableArea(x, z),
+      rim: () => false,
+      paths: eastPaths,
+      walkways: TERRAIN.walkways,
+      near: [...forest.trees, ...eastTown.trees],
+      count: { trees: 44, rimTrees: 0, pathHedges: 0, bushes: 10, flowers: 30, tufts: 50, rocks: 0, lilies: 0, cattails: 0 },
+    },
+    lanterns
+  );
+  const east = [forest, eastTown, backWood];
+  const trees = [...core.trees.filter(clearOfCutting), ...north.trees, ...east.flatMap((r) => r.trees)].filter(onGrass);
   cached = {
     land: contours(g, land, 3),
+    beach: contours(g, sand, 3),
     rim: contours(g, rim, 3),
     paths: contours(g, paths, 3),
     waterColliders: waterColliders(g, water),
     rimHeight: RIM_HEIGHT,
     scatter: {
       trees,
-      hedges: [...core.hedges.filter(clearOfCutting), ...north.hedges],
-      flowers: [...core.flowers, ...north.flowers, ...meadow].filter(offGreenhouse),
-      tufts: [...core.tufts, ...north.tufts].filter(offGreenhouse),
-      rocks: core.rocks,
-      lanterns: lanterns.filter(offGreenhouse),
-      lilies: core.lilies,
-      cattails: core.cattails,
-      // Every orchard tree has dropped one.
-      apples: [...applesUnder(core.trees), ...applesUnder(north.trees), ...orchard.map((t, i) => ({ ...t, x: t.x + (i % 2 ? 0.7 : -0.6), z: t.z + 0.7, s: 1 }))],
+      hedges: [...core.hedges.filter(clearOfCutting), ...north.hedges, ...east.flatMap((r) => r.hedges)].filter(onGrass),
+      flowers: [...core.flowers, ...north.flowers, ...east.flatMap((r) => r.flowers)].filter(offGreenhouse).filter(onGrass),
+      tufts: [...core.tufts, ...north.tufts, ...east.flatMap((r) => r.tufts)].filter(offGreenhouse).filter(onGrass),
+      rocks: [...core.rocks, ...east.flatMap((r) => r.rocks)].filter(onGrass),
+      lanterns: lanterns.filter((l) => offGreenhouse(l) && !onFarmGrid(l.x, l.z, 0.5) && l.z < beachEdge(l.x) - 0.6),
+      lilies: [...core.lilies, ...east.flatMap((r) => r.lilies)],
+      cattails: [...core.cattails, ...east.flatMap((r) => r.cattails)],
+      apples: [...applesUnder(core.trees), ...applesUnder(north.trees), ...applesUnder(eastTown.trees)].filter(onGrass),
     },
   };
   return cached;

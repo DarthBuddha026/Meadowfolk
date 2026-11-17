@@ -1,62 +1,16 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useMemo } from 'react';
 import { RoundedBox } from '@react-three/drei';
-import { CuboidCollider, CylinderCollider, RigidBody } from '@react-three/rapier';
-import { Color, InstancedMesh, MeshStandardMaterial, Object3D, SphereGeometry, type Group } from 'three';
-import { BENCHES, CLUBHOUSE_EXTERIOR, FRUIT_STAND, HAMLET_BENCHES, HOUSES, LANDMARKS, SIGNPOSTS, WATCHTOWER, WELL } from '@/game/data';
+import { CuboidCollider, RigidBody } from '@react-three/rapier';
+import { Color, InstancedMesh, MeshStandardMaterial, Object3D, SphereGeometry } from 'three';
+import { BENCHES, CARPENTER_HOUSE, FRUIT_STAND, HOUSES, SIGNPOSTS } from '@/game/data';
 import { getSteppingStones, STONE } from '@/game/engine/terrain';
 import { Cottage } from './cottage';
+import { TownPlaza } from './plaza';
+import { EastSide } from './east-side';
 import { getWorldMaterials } from './materials';
 import { useCanvasTexture } from './use-canvas-texture';
-
-/** The Junction Node — a pebble-ringed plinth with the glowing heart of the network. */
-function JunctionNode() {
-  const m = getWorldMaterials();
-  const ring = useRef<Group>(null);
-  const core = useRef<MeshStandardMaterial>(null);
-  useFrame(({ clock }, dt) => {
-    if (ring.current) ring.current.rotation.y += dt * 0.5;
-    if (core.current) core.current.emissiveIntensity = 1.2 + Math.sin(clock.elapsedTime * 2) * 0.4;
-  });
-  const [x, z] = LANDMARKS.junctionNode;
-  return (
-    <RigidBody type="fixed" colliders={false} position={[x, 0, z]}>
-      <CylinderCollider args={[1.2, 1.35]} position={[0, 1.2, 0]} />
-      {Array.from({ length: 16 }).map((_, i) => {
-        const a = (i / 16) * Math.PI * 2;
-        return (
-          <mesh key={i} position={[Math.cos(a) * 1.45, 0.14, Math.sin(a) * 1.45]} rotation={[0, -a, 0]} scale={[0.32, 0.22, 0.28]} material={m.stone} castShadow receiveShadow>
-            <sphereGeometry args={[1, 12, 8]} />
-          </mesh>
-        );
-      })}
-      <mesh position={[0, 0.25, 0]} receiveShadow castShadow>
-        <cylinderGeometry args={[1.3, 1.35, 0.5, 32]} />
-        <meshStandardMaterial color="#e3d5bd" roughness={0.9} />
-      </mesh>
-      <RoundedBox args={[0.9, 1.1, 0.9]} radius={0.16} position={[0, 0.95, 0]} castShadow>
-        <meshStandardMaterial color="#d8c4a2" roughness={0.9} />
-      </RoundedBox>
-      <mesh position={[0, 1.55, 0]} castShadow>
-        <cylinderGeometry args={[0.55, 0.5, 0.14, 24]} />
-        <meshStandardMaterial color="#c9b08b" roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 2.15, 0]} rotation={[0, Math.PI / 4, 0]}>
-        <octahedronGeometry args={[0.42, 0]} />
-        <meshStandardMaterial ref={core} color="#a8f5ea" emissive="#19b3a6" emissiveIntensity={1.2} roughness={0.2} flatShading />
-      </mesh>
-      <group ref={ring} position={[0, 2.15, 0]}>
-        <mesh rotation={[Math.PI / 2.3, 0, 0]}>
-          <torusGeometry args={[0.75, 0.045, 10, 48]} />
-          <meshStandardMaterial color="#ffd166" emissive="#ffb020" emissiveIntensity={0.7} metalness={0.3} roughness={0.3} />
-        </mesh>
-      </group>
-      <pointLight position={[0, 2.2, 0]} color="#5fe6d6" intensity={5} distance={7} />
-    </RigidBody>
-  );
-}
 
 /** Flat stepping stones laid along the walkways from the roads to the houses' doors. */
 function SteppingStones() {
@@ -282,106 +236,10 @@ function Signpost({ x, z, rot, text }: { x: number; z: number; rot: number; text
   );
 }
 
-/** The north bank's wooden watchtower, looking out over the hamlet to the river (set dressing). */
-function Watchtower() {
+/** Bram the carpenter's workshop. */
+function CarpenterHouse() {
   const m = getWorldMaterials();
-  const H = 3.2;
-  const half = 0.75;
-  return (
-    <RigidBody type="fixed" colliders={false} position={[WATCHTOWER.x, 0, WATCHTOWER.z]}>
-      <CuboidCollider args={[half + 0.1, 2.2, half + 0.1]} position={[0, 2.2, 0]} />
-      {/* Four splayed legs and two rings of braces. */}
-      {[-1, 1].flatMap((sx) =>
-        [-1, 1].map((sz) => (
-          <mesh key={`${sx}${sz}`} position={[sx * half, H / 2, sz * half]} rotation={[sz * 0.05, 0, -sx * 0.05]} material={m.woodDark} castShadow>
-            <boxGeometry args={[0.16, H, 0.16]} />
-          </mesh>
-        ))
-      )}
-      {[0.9, 2.1].flatMap((y) =>
-        [0, 1].map((k) => (
-          <mesh key={`${y}${k}`} position={[0, y, 0]} rotation={[0, (k * Math.PI) / 2, 0]} material={m.wood} castShadow>
-            <boxGeometry args={[half * 2 + 0.2, 0.08, 0.06]} />
-          </mesh>
-        ))
-      )}
-      {/* Platform, railing and a little pitched roof. */}
-      <RoundedBox args={[half * 2 + 0.6, 0.14, half * 2 + 0.6]} radius={0.04} position={[0, H, 0]} material={m.wood} castShadow receiveShadow />
-      {[-1, 1].flatMap((s) => [
-        <mesh key={`x${s}`} position={[s * (half + 0.27), H + 0.42, 0]} material={m.wood} castShadow>
-          <boxGeometry args={[0.06, 0.06, half * 2 + 0.6]} />
-        </mesh>,
-        <mesh key={`z${s}`} position={[0, H + 0.42, s * (half + 0.27)]} material={m.wood} castShadow>
-          <boxGeometry args={[half * 2 + 0.6, 0.06, 0.06]} />
-        </mesh>,
-      ])}
-      {[-1, 1].flatMap((sx) =>
-        [-1, 1].map((sz) => (
-          <mesh key={`p${sx}${sz}`} position={[sx * (half + 0.25), H + 0.75, sz * (half + 0.25)]} material={m.woodDark} castShadow>
-            <boxGeometry args={[0.1, 1.5, 0.1]} />
-          </mesh>
-        ))
-      )}
-      <mesh position={[0, H + 1.78, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
-        <coneGeometry args={[1.55, 0.75, 4]} />
-        <meshStandardMaterial color="#c9734a" roughness={0.85} flatShading />
-      </mesh>
-      {/* Ladder up the south side, where the stepping stones arrive. */}
-      <group position={[0, H / 2, half + 0.32]} rotation={[0.18, 0, 0]}>
-        {[-0.22, 0.22].map((x) => (
-          <mesh key={x} position={[x, 0, 0]} material={m.woodDark} castShadow>
-            <boxGeometry args={[0.06, H + 0.2, 0.06]} />
-          </mesh>
-        ))}
-        {Array.from({ length: 8 }, (_, i) => (
-          <mesh key={i} position={[0, -H / 2 + 0.3 + i * 0.4, 0]} material={m.wood}>
-            <boxGeometry args={[0.44, 0.04, 0.05]} />
-          </mesh>
-        ))}
-      </group>
-    </RigidBody>
-  );
-}
-
-/** The stone well on the north bank's green, with its little roof and bucket. */
-function Well() {
-  const m = getWorldMaterials();
-  return (
-    <RigidBody type="fixed" colliders={false} position={[WELL.x, 0, WELL.z]}>
-      <CylinderCollider args={[0.5, 0.7]} position={[0, 0.5, 0]} />
-      <mesh position={[0, 0.32, 0]} material={m.stone} castShadow receiveShadow>
-        <cylinderGeometry args={[0.62, 0.68, 0.64, 18, 1, true]} />
-      </mesh>
-      <mesh position={[0, 0.66, 0]} rotation={[Math.PI / 2, 0, 0]} material={m.stone} castShadow>
-        <torusGeometry args={[0.62, 0.08, 8, 24]} />
-      </mesh>
-      <mesh position={[0, 0.42, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.6, 18]} />
-        <meshStandardMaterial color="#2f6f78" roughness={0.3} />
-      </mesh>
-      {[-1, 1].map((s) => (
-        <mesh key={s} position={[s * 0.62, 0.95, 0]} material={m.woodDark} castShadow>
-          <boxGeometry args={[0.1, 1.3, 0.1]} />
-        </mesh>
-      ))}
-      <mesh position={[0, 1.25, 0]} rotation={[0, 0, Math.PI / 2]} material={m.wood}>
-        <cylinderGeometry args={[0.04, 0.04, 1.3, 8]} />
-      </mesh>
-      <mesh position={[0, 1.82, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
-        <coneGeometry args={[1.05, 0.6, 4]} />
-        <meshStandardMaterial color="#8a64a8" roughness={0.85} flatShading />
-      </mesh>
-      <mesh position={[0.18, 0.95, 0]} material={m.woodDark} castShadow>
-        <cylinderGeometry args={[0.12, 0.1, 0.2, 10]} />
-      </mesh>
-    </RigidBody>
-  );
-}
-
-/** The Circuit Club house — Mission 1 happens inside (a separate map). */
-function ClubhouseExterior() {
-  const m = getWorldMaterials();
-  const c = CLUBHOUSE_EXTERIOR;
+  const c = CARPENTER_HOUSE;
   const sign = useCanvasTexture(
     512,
     116,
@@ -392,9 +250,9 @@ function ClubhouseExterior() {
       ctx.font = 'bold 56px Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('CIRCUIT CLUB', w / 2, h / 2 + 3, w - 30);
+      ctx.fillText('CARPENTER', w / 2, h / 2 + 3, w - 30);
     },
-    'circuit-club'
+    'carpenter'
   );
   return (
     <>
@@ -421,18 +279,17 @@ function ClubhouseExterior() {
 export function Landmarks() {
   return (
     <>
-      <JunctionNode />
+      <TownPlaza />
+      <EastSide />
       <SteppingStones />
       <FruitStand />
-      {[...BENCHES, ...HAMLET_BENCHES].map((b, i) => (
+      {BENCHES.map((b, i) => (
         <Bench key={i} {...b} />
       ))}
-      <Watchtower />
-      <Well />
       {HOUSES.map((h, i) => (
         <Cottage key={i} plan={h} />
       ))}
-      <ClubhouseExterior />
+      <CarpenterHouse />
       {SIGNPOSTS.map((s) => (
         <Signpost key={s.text} {...s} />
       ))}

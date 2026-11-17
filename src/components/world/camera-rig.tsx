@@ -3,33 +3,37 @@
 import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Vector3 } from 'three';
-import { CLUBHOUSE, getDialogueTree, GREENHOUSE, SHOTS, STAGES, type MapId, type Vec3 } from '@/game/data';
-import { adjustZoom, cameraState, playerState } from '@/game/engine/world-state';
+import { SHOTS } from '@/game/data';
+import { GRID, HOUSE_AREA, villaBounds } from '@/game/sim/farm-map';
+import { shopRoom } from '@/game/data';
+import { zoneAt } from '@/game/state/zones';
+import { getFarm } from '@/game/state/farm-store';
+import { getMoveIntent } from '@/game/engine/input';
+import { adjustZoom, buildFocus, cameraState, playerState } from '@/game/engine/world-state';
 import { useSession } from '@/game/state/session-store';
 
 const FOLLOW_OFFSET = new Vector3(0, 10.5, 8.2);
+/** Indoors: closer, framing the room (as in the town's buildings). */
 const INDOOR_OFFSET = new Vector3(0, 8.6, 7.4);
-const ORBIT_CENTER = new Vector3(1, 0, -2);
-
-/** Indoor maps: where the follow camera may roam, so it frames the room instead of chasing into walls. */
-const INTERIORS: Partial<Record<MapId, { origin: Vec3; x: number; z: [number, number] }>> = {
-  clubhouse: { origin: CLUBHOUSE.origin, x: 2.6, z: [-3.6, 3.6] },
-  greenhouse: { origin: GREENHOUSE.origin, x: 2.6, z: [-3.2, 3.0] },
-};
+/** Build mode pulls up and back to look down over the farm. */
+const BUILD_OFFSET = new Vector3(0, 17, 11);
+const ORBIT_CENTER = new Vector3(0, 0, -14);
 
 /**
- * Camera director: orbit on the title, framed shots for conversations and
- * close inspection, and a smooth third-person follow while exploring.
+ * Camera director: a slow orbit over the diorama on the title, the setup shot, a smooth high
+ * follow while playing, a closer room view inside the villa (it frames the room instead of
+ * chasing the hero into walls), and a higher view in build mode that WASD pans over the farm.
  */
 export function CameraRig() {
   const { camera, gl, scene } = useThree();
   const look = useRef(new Vector3(0, 1, 0));
   const desiredPos = useRef(new Vector3());
   const desiredLook = useRef(new Vector3());
+  const wasBuilding = useRef(false);
 
-  //  exposes the scene graph for automated checks.
+  // `?debug` exposes the scene graph for automated checks.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has('debug')) Object.assign(window, { __trioeThree: { scene, camera } });
+    if (new URLSearchParams(window.location.search).has('debug')) Object.assign(window, { __meadowThree: { scene, camera } });
   }, [scene, camera]);
 
   useEffect(() => {
@@ -43,54 +47,46 @@ export function CameraRig() {
   }, [gl]);
 
   useFrame((state, rawDt) => {
-    // Exponential smoothing stays stable with large steps, so only guard against tab-switch spikes.
     const dt = Math.min(rawDt, 0.25);
     const s = useSession.getState();
     const p = playerState.position;
     let speed = 3.2;
 
-    const stage = s.dialogue ? STAGES[getDialogueTree(s.dialogue.treeId)?.stageId ?? ''] : undefined;
-    const panelShot = s.panel && SHOTS[s.panel];
+    if (s.build.on && !wasBuilding.current) {
+      buildFocus.x = p.x;
+      buildFocus.z = p.z;
+    }
+    wasBuilding.current = s.build.on;
 
-    if (s.screen === 'loading' && state.clock.elapsedTime < 1.2) {
-      // Warm-up: glance into each interior behind the loading screen so their GPU
-      // pipelines are compiled before the player ever walks through a door.
-      const room = state.clock.elapsedTime < 0.6 ? STAGES.workshop : STAGES.garden;
-      desiredPos.current.fromArray(room.camera);
-      desiredLook.current.fromArray(room.lookAt);
-      camera.position.copy(desiredPos.current);
-      look.current.copy(desiredLook.current);
-      camera.lookAt(look.current);
-      return;
-    } else if (s.screen === 'loading' || s.screen === 'title') {
-      const t = state.clock.elapsedTime * 0.06;
-      desiredPos.current.set(ORBIT_CENTER.x + Math.sin(t) * 24, 17, ORBIT_CENTER.z + Math.cos(t) * 24);
+    if (s.screen === 'loading' || s.screen === 'title') {
+      const t = state.clock.elapsedTime * 0.05;
+      desiredPos.current.set(ORBIT_CENTER.x + Math.sin(t) * 30, 22, ORBIT_CENTER.z + Math.cos(t) * 30);
       desiredLook.current.copy(ORBIT_CENTER);
       speed = 1.5;
-    } else if (s.screen === 'hero-setup') {
-      desiredPos.current.fromArray(SHOTS.heroSetup.camera);
-      desiredLook.current.fromArray(SHOTS.heroSetup.lookAt);
+    } else if (s.screen === 'setup') {
+      desiredPos.current.fromArray(SHOTS.setup.camera);
+      desiredLook.current.fromArray(SHOTS.setup.lookAt);
       speed = 2;
-    } else if (stage) {
-      desiredPos.current.fromArray(stage.camera);
-      desiredLook.current.fromArray(stage.lookAt);
-      speed = 2.6;
-    } else if (panelShot) {
-      desiredPos.current.fromArray(panelShot.camera);
-      desiredLook.current.fromArray(panelShot.lookAt);
-      speed = 3.5;
-    } else if (s.shot && SHOTS[s.shot]) {
-      desiredPos.current.fromArray(SHOTS[s.shot].camera);
-      desiredLook.current.fromArray(SHOTS[s.shot].lookAt);
-      speed = 2.2;
-    } else if (INTERIORS[s.map]) {
-      // Indoors: closer, and the framing stays on the room instead of chasing into walls.
-      const room = INTERIORS[s.map]!;
+    } else if (s.build.on) {
+      // Pan with WASD, kept over the farm.
+      const move = getMoveIntent();
+      const pan = (move.run ? 16 : 9) * dt;
+      // Inside, over the house's rooms (their own space); outside, over the farm.
+      const [c0, c1, r0, r1] = s.indoors ? [HOUSE_AREA.c0, HOUSE_AREA.c1, HOUSE_AREA.r0, HOUSE_AREA.r1] : [0, GRID.cols, 0, GRID.rows + 4];
+      buildFocus.x = Math.max(GRID.x0 + c0, Math.min(GRID.x0 + c1, buildFocus.x + move.x * pan));
+      buildFocus.z = Math.max(GRID.z0 + r0, Math.min(GRID.z0 + r1, buildFocus.z - move.y * pan));
+      const z = cameraState.zoom;
+      desiredPos.current.set(buildFocus.x + BUILD_OFFSET.x * z, BUILD_OFFSET.y * z, buildFocus.z + BUILD_OFFSET.z * z);
+      desiredLook.current.set(buildFocus.x, 0, buildFocus.z);
+      speed = 6;
+    } else if (s.indoors && room()) {
+      // Indoors: the focus stays inside the room, a little in from its walls.
+      const r = room()!;
       const z = Math.min(cameraState.zoom, 1.2);
-      const [ox, , oz] = room.origin;
-      const fx = ox + Math.max(-room.x, Math.min(room.x, p.x - ox));
-      const fz = oz + Math.max(room.z[0], Math.min(room.z[1], p.z - oz));
-      desiredPos.current.set(fx, INDOOR_OFFSET.y * z, fz + INDOOR_OFFSET.z * z);
+      const clamp = (v: number, a: number, b: number) => (a > b ? (a + b) / 2 : Math.max(a, Math.min(b, v)));
+      const fx = clamp(p.x, r.x0 + 2, r.x1 - 2);
+      const fz = clamp(p.z, r.z0 + 1.6, r.z1 - 1.4);
+      desiredPos.current.set(fx + INDOOR_OFFSET.x * z, INDOOR_OFFSET.y * z, fz + INDOOR_OFFSET.z * z);
       desiredLook.current.set(fx, 0.5, fz - 0.6);
       speed = 5;
     } else {
@@ -100,9 +96,8 @@ export function CameraRig() {
       speed = 5;
     }
 
-    // Cut instantly on big jumps (entering the system, walking through a door).
-    if (s.screen === 'entering' || camera.position.distanceTo(desiredPos.current) > 40) {
-      // Snap behind the hero while the arrival cinematic covers the screen.
+    // Cut instantly on big jumps (arriving, waking up, visiting a friend) and behind a door's fade card.
+    if (s.screen === 'entering' || !!s.transition || camera.position.distanceTo(desiredPos.current) > 40) {
       camera.position.copy(desiredPos.current);
       look.current.copy(desiredLook.current);
     } else {
@@ -114,4 +109,13 @@ export function CameraRig() {
   });
 
   return null;
+}
+
+/** The room the hero is in (a shop's, or the house's) in world units. */
+function room() {
+  const zone = zoneAt(playerState.position.x, playerState.position.z);
+  if (zone !== 'house' && zone !== 'out') return shopRoom(zone);
+  const farm = getFarm();
+  const b = farm && villaBounds(farm);
+  return b && { x0: GRID.x0 + b.c0, x1: GRID.x0 + b.c1, z0: GRID.z0 + b.r0, z1: GRID.z0 + b.r1 };
 }

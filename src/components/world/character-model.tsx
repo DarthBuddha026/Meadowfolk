@@ -13,10 +13,10 @@ import {
   type Object3D,
 } from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { HEROES, VILLAGERS } from '@/game/data';
+import { LOOKS, SHOP_SPOTS, VILLAGERS } from '@/game/data';
 
 /**
- * Every character — heroes, Sarah, Captain T — is the plain base
+ * Every character — players, shopkeepers, villagers — wears a rigged model; the fallback is the plain base
  * model: `public/models/base-character.glb`, the mazko chibi base model with its own
  * skin material and black outline shell, rigged with a Mixamo-style skeleton and
  * keyframed by `scripts/build-base-character.py`. A character with its own `model` wears that
@@ -47,7 +47,8 @@ interface Props extends CharacterLook {
 
 const BASE_URL = '/models/base-character.glb';
 useGLTF.preload(BASE_URL);
-for (const hero of HEROES) if (hero.model) useGLTF.preload(hero.model);
+for (const look of LOOKS) if (look.model) useGLTF.preload(look.model);
+for (const spot of Object.values(SHOP_SPOTS)) useGLTF.preload(spot.model);
 for (const villager of VILLAGERS) useGLTF.preload(villager.model);
 
 export function CharacterModel(props: Props) {

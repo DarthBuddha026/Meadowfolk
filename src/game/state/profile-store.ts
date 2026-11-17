@@ -1,61 +1,104 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import type { RoleId } from '@/game/data';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { START_GOLD } from '@/game/sim/content';
+import { addTo } from '@/game/sim/sim';
+import type { Bag, ItemKey } from '@/game/sim/types';
 
 /**
- * Persistent player profile: hero identity, earned Insight Gems, settings.
+ * The player's own profile: who they are, how they look, their gold and their personal bag. It
+ * travels with them when they visit a friend's farm. Each player's own client writes it (to the
+ * cloud when it is configured — see cloud.ts — with this localStorage copy as a cache only).
  */
-interface ProfileState {
-  heroId: string | null;
-  heroName: string;
-  role: RoleId | null;
-  /** Mission ids whose Insight Gem has been earned (exactly one each, ever). */
-  gems: string[];
-  /** Unlocked areas whose reveal has been shown (`'north-bank'`), so it plays only once. */
-  revealed: string[];
+export interface ProfileData {
+  playerId: string;
+  name: string;
+  look: string;
+  gold: number;
+  bag: Bag;
+  /** One-time nudges already shown: 'email-after-visit', 'email-after-host'. */
+  nudged: string[];
+  /** When this profile was last changed (ms), to pick the newer of the cloud and local copies. */
+  savedAt: number;
+}
+
+interface ProfileState extends ProfileData {
   muted: boolean;
-  setIdentity: (heroId: string, heroName: string, role: RoleId) => void;
-  setHero: (heroId: string) => void;
-  awardGem: (missionId: string) => boolean;
-  markRevealed: (id: string) => void;
+  setIdentity: (name: string, look: string) => void;
+  setPlayerId: (id: string) => void;
+  addItem: (item: ItemKey, n: number) => void;
+  addGold: (n: number) => void;
+  markNudged: (id: string) => void;
+  load: (data: ProfileData) => void;
   toggleMuted: () => void;
-  resetProfile: () => void;
+  /** New game: a fresh wallet and bag (identity kept). */
+  resetEconomy: () => void;
+}
+
+const newId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+/** The starting bag for a new farmer. */
+export const STARTER_BAG: Bag = { 'seed-turnip': 15, 'seed-peas': 4, acorn: 2 };
+
+/**
+ * Two players on one machine (testing co-op in two tabs) need two profiles: `?profile=<name>` keeps
+ * a separate one under its own key.
+ */
+function storageKey() {
+  if (typeof window === 'undefined') return 'meadowfolk-profile';
+  const p = new URLSearchParams(window.location.search).get('profile');
+  return p ? `meadowfolk-profile-${p.replace(/[^\w-]/g, '').slice(0, 24)}` : 'meadowfolk-profile';
 }
 
 export const useProfile = create<ProfileState>()(
   persist(
     (set, get) => ({
-      heroId: null,
-      heroName: '',
-      role: null,
-      gems: [],
-      revealed: [],
+      playerId: '',
+      name: '',
+      look: 'farmer',
+      gold: START_GOLD,
+      bag: { ...STARTER_BAG },
+      nudged: [],
+      savedAt: 0,
       muted: false,
-      setIdentity: (heroId, heroName, role) => set({ heroId, heroName, role }),
-      setHero: (heroId) => set({ heroId }),
-      awardGem: (missionId) => {
-        if (get().gems.includes(missionId)) return false;
-        set({ gems: [...get().gems, missionId] });
-        return true;
+      setIdentity: (name, look) =>
+        set(name.trim().toUpperCase() === 'DEV' ? { name, look, gold: DEV_GOLD, savedAt: Date.now() } : { name, look, savedAt: Date.now() }),
+      setPlayerId: (playerId) => set({ playerId }),
+      addItem: (item, n) => {
+        const bag = { ...get().bag };
+        addTo(bag, item, n);
+        set({ bag, savedAt: Date.now() });
       },
-      markRevealed: (id) => {
-        if (!get().revealed.includes(id)) set({ revealed: [...get().revealed, id] });
+      // The DEV account's purse never runs out (it's refilled on every change).
+      addGold: (n) => set({ gold: get().name.trim().toUpperCase() === 'DEV' ? DEV_GOLD : Math.max(0, get().gold + n), savedAt: Date.now() }),
+      markNudged: (id) => {
+        if (!get().nudged.includes(id)) set({ nudged: [...get().nudged, id], savedAt: Date.now() });
       },
+      load: (data) => set({ ...data }),
       toggleMuted: () => set({ muted: !get().muted }),
-      resetProfile: () => set({ heroId: null, heroName: '', role: null, gems: [], revealed: [] }),
+      resetEconomy: () => set({ gold: START_GOLD, bag: { ...STARTER_BAG }, savedAt: Date.now() }),
     }),
-    { name: 'trioe-3d-profile' }
+    {
+      name: storageKey(),
+      storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state) => {
+        if (state && !state.playerId) state.setPlayerId(newId());
+      },
+    }
   )
 );
 
-/**
- * A hero named "DEV" (any case) is a developer: every playable mission's signal is open and can
- * be answered at any time, without the previous gem. Gems are still only earned in REWARD.
- */
-export function isDevHero(heroName = useProfile.getState().heroName): boolean {
-  return heroName.trim().toUpperCase() === 'DEV';
+export function profileData(): ProfileData {
+  const { playerId, name, look, gold, bag, nudged, savedAt } = useProfile.getState();
+  return { playerId, name, look, gold, bag, nudged, savedAt };
 }
 
-export function hasIdentity(state: Pick<ProfileState, 'heroId' | 'heroName' | 'role'>): boolean {
-  return !!state.heroId && state.heroName.trim().length > 0 && !!state.role;
-}
+export const hasIdentity = (s: Pick<ProfileData, 'name'>) => s.name.trim().length >= 2;
+
+export const ownsItem = (item: ItemKey, n = 1) => (useProfile.getState().bag[item] ?? 0) >= n;
+
+/** A player named "DEV" (any case) gets plenty of gold for testing; nothing else changes. */
+export const isDevName = (name = useProfile.getState().name) => name.trim().toUpperCase() === 'DEV';
+
+/** The DEV account's gold: effectively infinite (shown as ∞). */
+export const DEV_GOLD = 999_999_999;

@@ -3,7 +3,7 @@ import { TERRAIN, type Pt } from './terrain-plan';
 /**
  * Ambient life in Junction: villagers who wander the paths, each wearing its own
  * low-poly villager model. They are set dressing only — no dialogue, no interact
- * point, no name tag — so they can never touch mission flow. They roam the whole
+ * point, no name tag. (Rosa and Bram, the shopkeepers, stand at their shops instead.) They roam the whole
  * path network (`WANDER`): roads, the bridge and the stepping stones to the houses.
  */
 
@@ -24,8 +24,8 @@ export interface VillagerPlan {
 /** Two path points closer than this are the same point; a point this near a segment joins it. */
 const MERGE = 0.3;
 const JOIN = 1.6;
-/** Radius of the ring the roads meet on round the plaza (clear of the Node and inside the benches). */
-const PLAZA_RING = 3.4;
+/** Radius of the ring the roads meet on round the plaza (clear of the fountain and inside the benches). */
+const PLAZA_RING = 3.8;
 
 /**
  * The network villagers wander: every road, the bridge, and the stepping-stone walkways, as points
@@ -33,8 +33,8 @@ const PLAZA_RING = 3.4;
  * terrain plan: a walkway that starts just off a road is joined to the nearest point on it.
  */
 function buildWander() {
-  // Roads leaving the plaza start on a ring round it instead of at its centre, where the Junction
-  // Node stands; the ring is walked as short chords between them.
+  // Roads leaving the plaza start on a ring round it instead of at its centre, where the fountain
+  // stands; the ring is walked as short chords between them.
   const [pcx, pcz] = TERRAIN.plaza.center;
   const ringAt = (a: number): Pt => [pcx + Math.cos(a) * PLAZA_RING, pcz + Math.sin(a) * PLAZA_RING];
   const exits: number[] = [];
@@ -115,13 +115,6 @@ const model = (id: string) => `/models/villager-${id}.glb`;
 
 export const VILLAGERS: VillagerPlan[] = [
   {
-    id: 'baker',
-    model: model('baker'),
-    start: [0, 12],
-    speed: 1.5,
-    pause: [2, 4],
-  },
-  {
     id: 'fisher',
     model: model('fisher'),
     start: [-7.5, 0],
@@ -135,13 +128,6 @@ export const VILLAGERS: VillagerPlan[] = [
     start: [9, -1.4],
     speed: 1.9,
     pause: [1.5, 3],
-  },
-  {
-    id: 'neighbour',
-    model: model('neighbour'),
-    start: [-4, 10.5],
-    speed: 1.1,
-    pause: [3, 5],
   },
   {
     id: 'pond-walker',

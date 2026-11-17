@@ -2,35 +2,47 @@
 
 import { AnimatePresence } from 'framer-motion';
 import { useSession } from '@/game/state/session-store';
-import { useMissionScript } from '@/game/state/use-mission';
 import { InteractPrompt, MobileControls } from './controls';
-import { DialogueCloud } from './dialogue-cloud';
-import { EvidencePanel } from './evidence-panel';
-import { MapTransition } from './map-transition';
-import { MentorToast } from './mentor-toast';
-import { CompletePanel, HelpPanel, JournalPanel, LockedSignalPanel, PausePanel, ReflectionPanel } from './panels';
+import { Banners, BuildPalette, Chat, Hotbar } from './farm-hud';
+import {
+  AccountPanel,
+  BagPanel,
+  CoopPanel,
+  CoopPlayPanel,
+  HelpPanel,
+  MorningPanel,
+  PausePanel,
+  ShipPanel,
+  ShopPanel,
+  StoragePanel,
+  ThanksPanel,
+} from './panels';
 import { TopBar } from './top-bar';
 
 /** In-play HUD layered over the 3D world. */
 export function Hud() {
   const panel = useSession((s) => s.panel);
-  const dialogue = useSession((s) => s.dialogue);
-  const script = useMissionScript();
+  const build = useSession((s) => s.build.on);
 
   return (
     <>
-      {!dialogue && <TopBar />}
-      <DialogueCloud />
-      <MentorToast />
+      {!build && <TopBar />}
+      <Banners />
       <InteractPrompt />
+      <Hotbar />
+      <Chat />
       <MobileControls />
-      <MapTransition />
+      <AnimatePresence>{build && <BuildPalette key="build" />}</AnimatePresence>
       <AnimatePresence>
-        {panel && script.evidence.includes(panel) && <EvidencePanel key={panel} id={panel} />}
-        {panel === 'journal' && <JournalPanel key="journal" />}
-        {panel === 'reflection' && <ReflectionPanel key="reflection" />}
-        {panel === 'complete' && <CompletePanel key="complete" />}
-        {panel === 'locked-signal' && <LockedSignalPanel key="locked" />}
+        {panel === 'shop' && <ShopPanel key="shop" />}
+        {panel === 'storage' && <StoragePanel key="storage" />}
+        {panel === 'ship' && <ShipPanel key="ship" />}
+        {panel === 'coop' && <CoopPanel key="coop" />}
+        {panel === 'bag' && <BagPanel key="bag" />}
+        {panel === 'coop-play' && <CoopPlayPanel key="coop-play" />}
+        {panel === 'morning' && <MorningPanel key="morning" />}
+        {panel === 'thanks' && <ThanksPanel key="thanks" />}
+        {panel === 'account' && <AccountPanel key="account" />}
         {panel === 'help' && <HelpPanel key="help" />}
         {panel === 'pause' && <PausePanel key="pause" />}
       </AnimatePresence>

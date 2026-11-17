@@ -20,7 +20,7 @@ import {
   Vector3,
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CLUBHOUSE_EXTERIOR, GREENHOUSE_EXTERIOR, HOUSES, TERRAIN } from '@/game/data';
+import { CARPENTER_HOUSE, HOUSES, TERRAIN } from '@/game/data';
 import { distToPaths, distToRiver, getRiverCourse, getTerrain, inWalkableArea, WATER_LEVEL, type ScatterItem } from '@/game/engine/terrain';
 import { playerState } from '@/game/engine/world-state';
 
@@ -584,7 +584,7 @@ interface Butterfly {
 /** Inside a house, or out over the raised rim or the ridge — places a low-flying butterfly must not go. */
 function blocked(x: number, z: number) {
   if (!inWalkableArea(x, z, 0.6)) return true;
-  const houses = [...HOUSES, { ...CLUBHOUSE_EXTERIOR, rot: 0 }, { ...GREENHOUSE_EXTERIOR, rot: 0 }];
+  const houses = [...HOUSES, { ...CARPENTER_HOUSE, rot: 0 }];
   return houses.some((h) => {
     const turned = Math.abs(Math.sin(h.rot)) > 0.5;
     const hw = (turned ? h.d : h.w) / 2 + 0.7;

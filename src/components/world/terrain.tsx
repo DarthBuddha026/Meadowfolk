@@ -199,9 +199,11 @@ export function Terrain() {
 
   const geos = useMemo(() => {
     const land = extrude(terrain.land, { depth: 1.2, bevel: 0.32, bevelThickness: 0.14 });
+    // The beaches: a lower, softer slab of sand sloping into the sea.
+    const beach = extrude(terrain.beach, { depth: 1.0, bevel: 0.6, bevelThickness: 0.18 });
     const rim = extrude(terrain.rim, { depth: RIM_HEIGHT + 0.6, bevel: 0.38, bevelThickness: 0.16 });
     const paths = extrude(terrain.paths, { depth: 0.02, bevel: PATH_BEVEL, bevelThickness: PATH_BEVEL_DROP, segments: 2 });
-    return { land, rim, paths };
+    return { land, beach, rim, paths };
   }, [terrain]);
 
   const bankMats = useMemo(() => {
@@ -218,7 +220,11 @@ export function Terrain() {
     return { land: make(1.2, 0.14), rim: make(RIM_HEIGHT + 0.6, 0.16) };
   }, [m]);
 
-  const { x: bx, z: bz, north: bn } = WORLD_BOUNDS;
+  const { west: bw, east: be, north: bn, south: bs } = WORLD_BOUNDS;
+  const midX = (be - bw) / 2;
+  const halfX = (be + bw) / 2;
+  const midZ = (bs - bn) / 2;
+  const halfZ = (bs + bn) / 2;
   // The ridge's two halves, either side of the cutting (the north gate closes the cutting itself).
   const ridgeZ = (RIDGE.z[0] + RIDGE.z[1]) / 2;
   const ridgeHalfZ = (RIDGE.z[1] - RIDGE.z[0]) / 2;
@@ -229,6 +235,7 @@ export function Terrain() {
     <>
       <Water />
       <Slab geometry={geos.land} top={0} materials={[m.grass, bankMats.land]} />
+      <Slab geometry={geos.beach} top={-0.02} materials={[m.sand, m.sand]} />
       <Slab geometry={geos.rim} top={RIM_HEIGHT} materials={[m.grass, bankMats.rim]} />
       <Slab geometry={geos.paths} top={PATH_TOP} materials={[m.sand, m.sand]} />
       {TERRAIN.bridges.map((b, i) => (
@@ -237,17 +244,17 @@ export function Terrain() {
       <Pond />
 
       <RigidBody type="fixed" colliders={false}>
-        {/* Ground everywhere; water and rim block movement. */}
-        <CuboidCollider args={[60, 0.5, 60]} position={[0, -0.5, 0]} />
+        {/* Ground everywhere; water, the rim and the waterline block movement. */}
+        <CuboidCollider args={[110, 0.5, 80]} position={[26, -0.5, 0]} />
         {terrain.waterColliders.map((c, i) => (
           <CuboidCollider key={i} args={[c.hx, 1.5, c.hz]} position={[c.x, 1, c.z]} />
         ))}
-        <CuboidCollider args={[bx, 3, 0.5]} position={[0, 3, -bn - 0.5]} />
-        <CuboidCollider args={[bx, 3, 0.5]} position={[0, 3, bz + 0.5]} />
-        <CuboidCollider args={[0.5, 3, (bz + bn) / 2]} position={[-bx - 0.5, 3, (bz - bn) / 2]} />
-        <CuboidCollider args={[0.5, 3, (bz + bn) / 2]} position={[bx + 0.5, 3, (bz - bn) / 2]} />
-        <CuboidCollider args={[(cutW + bx) / 2, 3, ridgeHalfZ]} position={[(cutW - bx) / 2, 3, ridgeZ]} />
-        <CuboidCollider args={[(bx - cutE) / 2, 3, ridgeHalfZ]} position={[(bx + cutE) / 2, 3, ridgeZ]} />
+        <CuboidCollider args={[halfX, 3, 0.5]} position={[midX, 3, -bn - 0.5]} />
+        <CuboidCollider args={[halfX, 3, 0.5]} position={[midX, 3, bs + 0.5]} />
+        <CuboidCollider args={[0.5, 3, halfZ]} position={[-bw - 0.5, 3, midZ]} />
+        <CuboidCollider args={[0.5, 3, halfZ]} position={[be + 0.5, 3, midZ]} />
+        <CuboidCollider args={[(cutW + bw) / 2, 3, ridgeHalfZ]} position={[(cutW - bw) / 2, 3, ridgeZ]} />
+        <CuboidCollider args={[(RIDGE.east - cutE) / 2, 3, ridgeHalfZ]} position={[(RIDGE.east + cutE) / 2, 3, ridgeZ]} />
       </RigidBody>
     </>
   );

@@ -6,8 +6,8 @@ const fredoka = Fredoka({ subsets: ['latin'], variable: '--font-fredoka', weight
 const nunito = Nunito({ subsets: ['latin'], variable: '--font-nunito' });
 
 export const metadata: Metadata = {
-  title: 'TRIOE: Smart Town Rescue',
-  description: 'Answer help signals in Junction and debug real Internet of Everything problems.',
+  title: 'Meadowfolk',
+  description: 'A cozy clay-diorama farm game: grow, sell, build your villa, and play with friends.',
 };
 
 export const viewport: Viewport = {

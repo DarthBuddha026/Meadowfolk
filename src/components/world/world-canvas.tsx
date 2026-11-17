@@ -6,34 +6,37 @@ import { Physics } from '@react-three/rapier';
 import {
   ACESFilmicToneMapping,
   CanvasTexture,
+  Color,
   EquirectangularReflectionMapping,
   SRGBColorSpace,
-  type Color,
   type DirectionalLight,
   type Fog,
+  type Group,
   type HemisphereLight,
 } from 'three';
-import { CLUBHOUSE, GREENHOUSE, type MapId } from '@/game/data';
 import { playerState } from '@/game/engine/world-state';
+import { clockHour, useClock } from '@/game/state/farm-store';
 import { useSession } from '@/game/state/session-store';
 import { QUALITY_PRESETS, useSettings } from '@/game/state/settings-store';
 import { WebGPURenderer } from 'three/webgpu';
+import { Animals } from './animals';
 import { CameraRig } from './camera-rig';
-import { Cast } from './cast';
-import { GreenhouseExterior, GreenhouseInterior } from './greenhouse';
 import { Farm } from './farm';
+import { FarmPlot } from './farm-plot';
 import { Landmarks } from './landmarks';
-import { NorthGate } from './north-gate';
-import { InsightGem, InteractionMarkers, SignalBeacons } from './markers';
+import { Placements } from './placements';
 import { Player } from './player';
+import { PointerController } from './pointer-controller';
 import { PostEffects } from './post-effects';
 import { Scenery } from './scenery';
 import { Terrain } from './terrain';
+import { RemotePlayers, Shopkeepers } from './townsfolk';
+import { ShopInteriors } from './shop-interiors';
+import { FarmTrees } from './farm-trees';
 import { Villagers } from './villagers';
 import { Wildlife } from './wildlife';
-import { ClubhouseInterior } from './workshop';
 
-/** Mounts only once Suspense (physics WASM) has resolved. */
+/** Mounts only once Suspense (physics WASM, models) has resolved. */
 function ReadySignal({ onReady }: { onReady: () => void }) {
   useEffect(() => {
     const id = window.setTimeout(onReady, 250);
@@ -66,28 +69,42 @@ function SkyEnvironment() {
   return <primitive object={texture} attach="environment" />;
 }
 
-interface MapLook {
-  background: string;
-  fog: [number, number];
-  center: [number, number, number];
-  shadowExtent: number;
-  sunIntensity: number;
-  hemi: number;
-  /** The shadow box follows the hero (Junction is bigger than one shadow box), instead of staying on `center`. */
-  follow?: boolean;
+/**
+ * The day: key light colour and strength, sky fill and background by hour (6 … 26 = 2 AM).
+ * Dawn is peach, midday warm white, dusk orange, night a soft blue — never pitch dark.
+ */
+const DAY: { h: number; sun: string; sunI: number; hemi: number; sky: string }[] = [
+  { h: 6, sun: '#ffc59a', sunI: 1.5, hemi: 0.55, sky: '#f3d9c6' },
+  { h: 8.5, sun: '#ffe2b5', sunI: 2.7, hemi: 0.8, sky: '#cfe9e4' },
+  { h: 16, sun: '#ffe2b5', sunI: 2.7, hemi: 0.8, sky: '#cfe9e4' },
+  { h: 18.5, sun: '#ffaf6e', sunI: 1.9, hemi: 0.62, sky: '#f2c7a4' },
+  { h: 20.5, sun: '#94a3dc', sunI: 0.75, hemi: 0.42, sky: '#55628f' },
+  { h: 26, sun: '#7f8fd0', sunI: 0.6, hemi: 0.36, sky: '#323d63' },
+];
+
+const ca = new Color();
+const cb = new Color();
+function dayAt(hour: number) {
+  let i = 0;
+  while (i < DAY.length - 2 && hour > DAY[i + 1].h) i++;
+  const a = DAY[i];
+  const b = DAY[i + 1];
+  const t = Math.max(0, Math.min(1, (hour - a.h) / (b.h - a.h)));
+  return {
+    sun: ca.set(a.sun).lerp(cb.set(b.sun), t).clone(),
+    sunI: a.sunI + (b.sunI - a.sunI) * t,
+    hemi: a.hemi + (b.hemi - a.hemi) * t,
+    sky: ca.set(a.sky).lerp(cb.set(b.sky), t).clone(),
+  };
 }
 
-const LOOKS: Record<MapId, MapLook> = {
-  junction: { background: '#cfe9e4', fog: [45, 95], center: [0, 0, 0], shadowExtent: 32, sunIntensity: 2.7, hemi: 0.8, follow: true },
-  clubhouse: { background: '#2a2019', fog: [40, 80], center: CLUBHOUSE.origin, shadowExtent: 10, sunIntensity: 1.6, hemi: 0.55 },
-  // Glass walls: the bright 'outdoors' behind them is the background colour.
-  greenhouse: { background: '#dcefe2', fog: [40, 80], center: GREENHOUSE.origin, shadowExtent: 9, sunIntensity: 2.4, hemi: 0.8 },
-};
+/** Inside a building: warm, dim and steady, the room floating in the dark (as in town interiors). */
+const INDOOR = { sun: new Color('#ffe2b5'), sunI: 1.6, hemi: 0.55, sky: new Color('#2a2019') };
 
 /** A following shadow box moves in steps this big, so its texels don't swim as the hero walks. */
 const SHADOW_STEP = 4;
+const SHADOW_EXTENT = 32;
 
-/** Aim the sun (and so its shadow box) at a point on the ground. */
 function aimSun(l: DirectionalLight, cx: number, cz: number) {
   l.position.set(cx + 14, 24, cz + 11);
   l.target.position.set(cx, 0, cz);
@@ -95,94 +112,71 @@ function aimSun(l: DirectionalLight, cx: number, cz: number) {
 }
 
 /**
- * Sun that follows the active map, so shadows always cover where the hero is (on Junction it
- * follows the hero). Shadows on/off and the shadow-map size come from Options and are updated in
- * place on this one light (toggling castShadow recompiles materials once, on Save).
+ * One sun that follows the hero (the world is bigger than one shadow box) and walks through the
+ * day. Every light and the fog are updated in place: on WebGPU a new light (or new constructor
+ * args) recompiles every material.
  */
-function Sun({ look }: { look: MapLook }) {
-  const light = useRef<DirectionalLight>(null);
-  const shadows = useSettings((s) => s.shadows);
-  const mapSize = useSettings((s) => QUALITY_PRESETS[s.quality].shadowMapSize);
-  useEffect(() => {
-    const l = light.current;
-    if (!l) return;
-    const e = look.shadowExtent;
-    aimSun(l, look.center[0], look.center[2]);
-    Object.assign(l.shadow.camera, { left: -e, right: e, top: e, bottom: -e });
-    l.shadow.camera.updateProjectionMatrix();
-  }, [look]);
-  useFrame(() => {
-    const l = light.current;
-    if (!l || !look.follow) return;
-    const cx = Math.round(playerState.position.x / SHADOW_STEP) * SHADOW_STEP;
-    const cz = Math.round(playerState.position.z / SHADOW_STEP) * SHADOW_STEP;
-    if (cx !== l.target.position.x || cz !== l.target.position.z) aimSun(l, cx, cz);
-  });
-  return (
-    <directionalLight
-      ref={light}
-      intensity={look.sunIntensity}
-      color="#ffe2b5"
-      castShadow={shadows}
-      shadow-mapSize={[mapSize, mapSize]}
-      shadow-camera-far={80}
-      shadow-bias={-0.0004}
-      shadow-normalBias={0.03}
-    />
-  );
-}
-
 function Lighting() {
-  const map = useSession((s) => s.map);
-  const look = LOOKS[map];
+  const light = useRef<DirectionalLight>(null);
   const background = useRef<Color>(null);
   const fog = useRef<Fog>(null);
   const hemi = useRef<HemisphereLight>(null);
+  const shadows = useSettings((s) => s.shadows);
+  const mapSize = useSettings((s) => QUALITY_PRESETS[s.quality].shadowMapSize);
 
-  // Update in place: re-creating the fog or a light (by changing constructor args)
-  // makes WebGPU recompile every material, which stalls the door transition.
   useEffect(() => {
-    background.current?.set(look.background);
-    if (fog.current) {
-      fog.current.color.set(look.background);
-      fog.current.near = look.fog[0];
-      fog.current.far = look.fog[1];
-    }
-    if (hemi.current) hemi.current.intensity = look.hemi;
-  }, [look]);
+    const l = light.current;
+    if (!l) return;
+    aimSun(l, 0, 0);
+    Object.assign(l.shadow.camera, { left: -SHADOW_EXTENT, right: SHADOW_EXTENT, top: SHADOW_EXTENT, bottom: -SHADOW_EXTENT });
+    l.shadow.camera.updateProjectionMatrix();
+  }, []);
+
+  useFrame(() => {
+    const l = light.current;
+    if (!l) return;
+    const cx = Math.round(playerState.position.x / SHADOW_STEP) * SHADOW_STEP;
+    const cz = Math.round(playerState.position.z / SHADOW_STEP) * SHADOW_STEP;
+    if (cx !== l.target.position.x || cz !== l.target.position.z) aimSun(l, cx, cz);
+    // The title and setup screens always show a sunny morning.
+    const s = useSession.getState();
+    const playing = s.screen === 'play';
+    const d = playing && s.indoors ? INDOOR : dayAt(playing ? clockHour(useClock.getState().minute) : 10);
+    l.color.copy(d.sun);
+    l.intensity = d.sunI;
+    if (hemi.current) hemi.current.intensity = d.hemi;
+    background.current?.copy(d.sky);
+    fog.current?.color.copy(d.sky);
+  });
 
   return (
     <>
-      <color ref={background} attach="background" args={[LOOKS.junction.background]} />
-      <fog ref={fog} attach="fog" args={[LOOKS.junction.background, ...LOOKS.junction.fog]} />
-      <hemisphereLight ref={hemi} args={['#fff3dd', '#8a6b45', LOOKS.junction.hemi]} />
-      <Sun look={look} />
+      <color ref={background} attach="background" args={['#cfe9e4']} />
+      <fog ref={fog} attach="fog" args={['#cfe9e4', 45, 95]} />
+      <hemisphereLight ref={hemi} args={['#fff3dd', '#8a6b45', 0.8]} />
+      <directionalLight
+        ref={light}
+        intensity={2.7}
+        color="#ffe2b5"
+        castShadow={shadows}
+        shadow-mapSize={[mapSize, mapSize]}
+        shadow-camera-far={80}
+        shadow-bias={-0.0004}
+        shadow-normalBias={0.03}
+      />
       <SkyEnvironment />
     </>
   );
 }
 
-/**
- * Every map stays rendered: they sit 160 m apart and never share the frustum, and
- * keeping them (and their lights) visible means the light set never changes —
- * on WebGPU a changing light set recompiles every material and stalls the door fade.
- */
-function MapGroup({ id, children }: { id: MapId; children: React.ReactNode }) {
-  return <group name={'map-' + id}>{children}</group>;
-}
-
-/**
- * Physics steps once per rendered frame ("vary"), so the camera, the hero and the
- * bodies always agree — no 60 Hz judder on high-refresh displays. It pauses while
- * a door transition swaps maps, so a slow frame there can't become one huge step.
- */
-function PhysicsWorld({ children }: { children: React.ReactNode }) {
-  const paused = useSession((s) => !!s.transition);
-  return (
-    <Physics gravity={[0, -20, 0]} timeStep="vary" paused={paused}>
-      {children}
-    </Physics>
-  );
+/** The outdoors: hidden while you're inside a building (it keeps running underneath). */
+function Outdoors({ children }: { children: React.ReactNode }) {
+  const group = useRef<Group>(null);
+  useFrame(() => {
+    const s = useSession.getState();
+    if (group.current) group.current.visible = !(s.indoors && s.screen === 'play');
+  });
+  return <group ref={group}>{children}</group>;
 }
 
 /** Exposes which GPU backend is active when running with `?debug`. */
@@ -191,16 +185,17 @@ function BackendProbe() {
   useEffect(() => {
     if (!new URLSearchParams(window.location.search).has('debug')) return;
     const backend = (gl.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'webgpu' : 'webgl2';
-    Object.assign(window, { __trioeBackend: backend });
-    console.info(`[TRIOE] renderer backend: ${backend}`);
+    Object.assign(window, { __meadowBackend: backend });
+    console.info(`[Meadowfolk] renderer backend: ${backend}`);
   }, [gl]);
   return null;
 }
 
 /**
- * The 3D world of Junction, rendered with three.js WebGPURenderer
- * (falls back to its WebGL2 backend where WebGPU is unavailable).
- * Mounted once; screens overlay on top of it.
+ * The one connected diorama — town, river, farm — rendered with three.js WebGPURenderer (falls
+ * back to its WebGL2 backend where WebGPU is unavailable). Mounted once; screens overlay it.
+ * Physics steps once per rendered frame ("vary"), so the camera, the hero and the bodies always
+ * agree — no 60 Hz judder on high-refresh displays.
  */
 export function WorldCanvas({ onReady }: { onReady: () => void }) {
   const maxDpr = useSettings((s) => QUALITY_PRESETS[s.quality].maxDpr);
@@ -223,32 +218,27 @@ export function WorldCanvas({ onReady }: { onReady: () => void }) {
       <Lighting />
       <BackendProbe />
       <Suspense fallback={null}>
-        {/* "vary" steps physics once per rendered frame, so the camera, the hero and the
-            physics body always agree — no 60 Hz judder on high-refresh displays. */}
-        <PhysicsWorld>
-          <MapGroup id="junction">
+        <Physics gravity={[0, -20, 0]} timeStep="vary">
+          <Outdoors>
             <Terrain />
             <Scenery />
             <Landmarks />
-            <NorthGate />
             <Farm />
-            <GreenhouseExterior />
+            <FarmPlot />
+            <FarmTrees />
+            <Animals />
             <Villagers />
             <Wildlife />
-          </MapGroup>
-          <MapGroup id="clubhouse">
-            <ClubhouseInterior />
-          </MapGroup>
-          <MapGroup id="greenhouse">
-            <GreenhouseInterior />
-          </MapGroup>
+          </Outdoors>
+          {/* The shops' insides (rooms off the map) with their keepers behind the counters. */}
+          <ShopInteriors />
+          <Shopkeepers />
+          <Placements />
           <Player />
-          <Cast />
-        </PhysicsWorld>
-        <SignalBeacons />
-        <InteractionMarkers />
-        <InsightGem />
+        </Physics>
+        <RemotePlayers />
         <CameraRig />
+        <PointerController />
         <ReadySignal onReady={onReady} />
       </Suspense>
       <PostEffects />

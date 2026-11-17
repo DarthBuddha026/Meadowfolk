@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, type Ref } from 'react';
 import { RoundedBox } from '@react-three/drei';
 import { CuboidCollider, RigidBody } from '@react-three/rapier';
 import {
   Color,
   CylinderGeometry,
+  type Group,
   ExtrudeGeometry,
   InstancedMesh,
   MeshStandardMaterial,
@@ -192,7 +193,24 @@ function Shopfront({ w, d, baseH, name, glass }: { w: number; d: number; baseH: 
 }
 
 /** A Junction cottage: brick base, plaster walls, tiled gable roof, warm windows. Optionally two storeys and a shop below. */
-export function Cottage({ plan }: { plan: HousePlan }) {
+/**
+ * A town cottage. Options for the farmhouse, which uses the same look: `collider={false}` leaves
+ * collisions to the caller, `roofGroup` gets the roof (gable, tiles, chimney) to fade, and
+ * `backDoor` adds an arched door on the back too.
+ */
+export function Cottage({
+  plan,
+  collider = true,
+  roofGroup,
+  fadeRoof = false,
+  backDoor = false,
+}: {
+  plan: HousePlan;
+  collider?: boolean;
+  roofGroup?: Ref<Group>;
+  fadeRoof?: boolean;
+  backDoor?: boolean;
+}) {
   const m = getWorldMaterials();
   const { w, d } = plan;
   const storeys = plan.storeys ?? 1;
@@ -220,14 +238,18 @@ export function Cottage({ plan }: { plan: HousePlan }) {
       for (let k = 0; k < perSideX; k++) {
         const x = -w / 2 + 0.26 + k * 0.52 + off;
         if (x > w / 2) continue;
-        list.push([x, y, -d / 2 - 0.06, 0, 1]);
-        // The front course leaves the doorway open: bricks crossing it are trimmed to the part beside it.
+        // The course leaves a doorway open: bricks crossing it are trimmed to the part beside it.
         const a = x - 0.25;
         const b = x + 0.25;
-        if (b <= -DOOR_GAP || a >= DOOR_GAP) list.push([x, y, d / 2 + 0.06, 0, 1]);
-        else {
-          if (-DOOR_GAP - a > 0.08) list.push([(a - DOOR_GAP) / 2, y, d / 2 + 0.06, 0, (-DOOR_GAP - a) / 0.5]);
-          if (b - DOOR_GAP > 0.08) list.push([(b + DOOR_GAP) / 2, y, d / 2 + 0.06, 0, (b - DOOR_GAP) / 0.5]);
+        for (const [zz, open] of [
+          [d / 2 + 0.06, true],
+          [-d / 2 - 0.06, backDoor],
+        ] as [number, boolean][]) {
+          if (!open || b <= -DOOR_GAP || a >= DOOR_GAP) list.push([x, y, zz, 0, 1]);
+          else {
+            if (-DOOR_GAP - a > 0.08) list.push([(a - DOOR_GAP) / 2, y, zz, 0, (-DOOR_GAP - a) / 0.5]);
+            if (b - DOOR_GAP > 0.08) list.push([(b + DOOR_GAP) / 2, y, zz, 0, (b - DOOR_GAP) / 0.5]);
+          }
         }
       }
       for (let k = 0; k < perSideZ; k++) {
@@ -249,7 +271,7 @@ export function Cottage({ plan }: { plan: HousePlan }) {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     return mesh;
-  }, [w, d, mats.brick]);
+  }, [w, d, mats.brick, backDoor]);
 
   const gable = useMemo(() => {
     const s = new Shape();
@@ -264,16 +286,18 @@ export function Cottage({ plan }: { plan: HousePlan }) {
   }, [w, d, rise]);
 
   return (
-    <RigidBody type="fixed" colliders={false} position={[plan.x, 0, plan.z]} rotation={[0, plan.rot, 0]}>
-      <CuboidCollider args={[w / 2 + 0.15, 1.6 * storeys, d / 2 + 0.15]} position={[0, 1.6 * storeys, 0]} />
+    <Shell collider={collider} position={[plan.x, 0, plan.z]} rotation={[0, plan.rot, 0]}>
+      {collider && <CuboidCollider args={[w / 2 + 0.15, 1.6 * storeys, d / 2 + 0.15]} position={[0, 1.6 * storeys, 0]} />}
       <primitive object={bricks} />
       <RoundedBox args={[w, wallH, d]} radius={0.08} position={[0, baseH + wallH / 2, 0]} material={mats.wall} castShadow receiveShadow />
-      <mesh geometry={gable} position={[0, eave, 0]} material={mats.wall} castShadow />
-      <TiledRoof width={w} depth={d} baseY={eave - 0.05} rise={rise} color={plan.roof} />
-      {/* Chimney */}
-      <RoundedBox args={[0.45, 1.1, 0.45]} radius={0.06} position={[w / 2 - 0.7, eave + rise * 0.75, -d / 4]} castShadow>
-        <meshStandardMaterial color="#c99a6e" roughness={0.9} />
-      </RoundedBox>
+      <group ref={roofGroup}>
+        <mesh geometry={gable} position={[0, eave, 0]} material={mats.wall} castShadow />
+        <TiledRoof width={w} depth={d} baseY={eave - 0.05} rise={rise} color={plan.roof} fadeable={fadeRoof} />
+        {/* Chimney */}
+        <RoundedBox args={[0.45, 1.1, 0.45]} radius={0.06} position={[w / 2 - 0.7, eave + rise * 0.75, -d / 4]} castShadow>
+          <meshStandardMaterial color="#c99a6e" roughness={0.9} />
+        </RoundedBox>
+      </group>
       {/* Door — the plaster behind it fills the gap in the brick course */}
       <mesh position={[0, baseH / 2, d / 2 - 0.02]} material={mats.wall} receiveShadow>
         <boxGeometry args={[DOOR_GAP * 2, baseH, 0.1]} />
@@ -286,6 +310,17 @@ export function Cottage({ plan }: { plan: HousePlan }) {
         </mesh>
       </group>
       <RoundedBox args={[1.2, 0.14, 0.55]} radius={0.05} position={[0, 0.07, d / 2 + 0.32]} material={m.wood} receiveShadow />
+      {backDoor && (
+        <group rotation={[0, Math.PI, 0]}>
+          <mesh position={[0, baseH / 2, d / 2 - 0.02]} material={mats.wall} receiveShadow>
+            <boxGeometry args={[DOOR_GAP * 2, baseH, 0.1]} />
+          </mesh>
+          <group position={[0, 0.06, d / 2 + 0.02]}>
+            <ArchedOpening w={0.86} h={1.32} depth={0.12} material={m.woodDark} />
+          </group>
+          <RoundedBox args={[1.2, 0.14, 0.55]} radius={0.05} position={[0, 0.07, d / 2 + 0.32]} material={m.wood} receiveShadow />
+        </group>
+      )}
       {/* Windows, one row per floor; upper floors get one over the door too */}
       {Array.from({ length: storeys }, (_, k) => {
         const y = baseH + 0.85 + k * floorH;
@@ -308,6 +343,16 @@ export function Cottage({ plan }: { plan: HousePlan }) {
           <boxGeometry args={[0.16, 0.2, 0.12]} />
         </mesh>
       )}
+    </Shell>
+  );
+}
+
+/** A fixed body for a town cottage, or a plain group when the caller handles collisions. */
+function Shell({ collider, position, rotation, children }: { collider: boolean; position: [number, number, number]; rotation: [number, number, number]; children: React.ReactNode }) {
+  if (!collider) return <group position={position} rotation={rotation}>{children}</group>;
+  return (
+    <RigidBody type="fixed" colliders={false} position={position} rotation={rotation}>
+      {children}
     </RigidBody>
   );
 }

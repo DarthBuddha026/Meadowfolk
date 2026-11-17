@@ -1,51 +1,47 @@
-# TRIOE: Smart Town Rescue
+# Meadowfolk
 
-A 3D, walk-around diorama version of **TRIOE: Mission Mode** — a detective-style Internet of Everything (IoE) learning game. Explore **Junction**, answer help signals, investigate real electronics/microcontroller faults, and earn Insight Gems.
+A cozy 3D farm-life game in a clay diorama, built for the browser and for playing with friends. Grow crops, raise chickens, sell to the town, and spend it on land and on a villa you build piece by piece. No combat, ever.
 
-Inspired by the clay-diorama look and explorable feel of [WoraWork](https://worawork.vercel.app/); story, characters, and learning rules come from the 2D game in `trioe-lms-mission`. The world (terrain, cottages, trees, props) is generated in code; the characters are rigged GLB models in `public/models/` (credits in `CREDITS.md`). Rendered with three.js **WebGPU** (Chrome/Edge 113+, Safari 26+, Firefox 141+ on Windows); other browsers automatically use the WebGL2 fallback.
+This is the first public **slice** of the design (`docs/2026-11-16-cozy-farm-game-design.md`, §9.1): Spring only (28 days, then Spring again), four crops, chickens, a Tier-1 villa with the basic kit (Tiers 2–3 purchasable), the home plot plus two parcels, a General Store and a Carpenter, the shipping bin, drop-in co-op with the thank-you tip, and accounts/saves.
 
 ## Run it
 
 ```bash
 npm install
-npm run dev      # http://localhost:3000
-npm run build    # production build
+npm --prefix relay install
+npm run dev          # the game:  http://localhost:3000
+npm run relay        # co-op relay on :2567 (only needed to play together)
+npm test             # farm-sim unit tests (incl. the host/guest replica check)
 npm run lint
+npx tsc --noEmit
 ```
 
-Add `?debug` to the URL to expose `window.__trioe` (teleport, phase, session) for testing.
+Copy `.env.example` to `.env.local` to configure things. Everything is optional:
 
-## Controls
+- **No Supabase** → saves live in this browser's localStorage (fine for development; a cleared browser loses the farm).
+- **Supabase** → run `supabase/schema.sql` in a new project, enable *anonymous sign-ins*, set `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the web build and `SUPABASE_URL` for the relay (it then checks every player's JWT).
+- **Relay URL** → `NEXT_PUBLIC_RELAY_URL` (defaults to `ws://<page host>:2567`).
+
+`docker compose up --build` runs the game and the relay together.
+
+To try co-op on one machine, open a second browser profile (or add `?profile=2` to the URL for a separate local profile), press **C** on the host to open the farm, and open the join link in the other.
+
+## How to play
 
 | Input | Action |
 |---|---|
-| WASD / Arrows | Move |
-| Shift | Run |
-| Space | Jump · continue dialogue |
-| E / Enter | Interact |
-| 1–4 | Pick a dialogue choice |
-| J | Evidence journal |
-| Scroll | Zoom |
-| Esc | Step back / close |
+| WASD / Arrows | Walk (Shift to run) |
+| E | Talk, shop, open the chest or shipping bin, tend the coop, sleep, pet |
+| F / Click | Use the tool in hand on the tile you face |
+| 1–9 | Pick hoe, watering can, seeds, fertilizer |
+| B | Build mode (your farm only): click to place, right-click / X to pick up, R rotate, Ctrl+Z undo, WASD pans |
+| I / Tab | Your bag |
+| C | Play together (open your farm, or visit a friend by code) |
+| T / Enter | Chat (in co-op) |
+| Esc | Close / pause |
 
-Touch devices get an on-screen joystick, Run and Jump buttons; tap prompts and the dialogue cloud to interact.
+The day runs 6 AM → 2 AM over 15 real minutes. Watered crops grow a stage overnight; unwatered ones simply wait. Ship produce in the bin — it pays the next morning. Shops keep hours (9 AM–5 PM, the carpenter till 4). Nothing dies, nothing is lost.
 
-Every mission runs the same eight phases: **Entry → Call for help → Investigation → Hypothesis → Challenge → Result → Reflection → Reward**. Wrong claims get redirected with questions from Captain T, never failed. The simulated hardware behaves like the real thing. Each mission awards exactly one Insight Gem, saved in localStorage.
+**Co-op**: the host's browser runs the farm; guests send intents, the host applies them and relays the accepted ones. Guests water, harvest (into the host's storage), plant from the host's storage, feed and pet animals, and shop with their own gold. They can't build, buy land, take from storage or end the day. When the host sleeps, a 20-second countdown runs for everyone; at day end (or when a guest leaves) the host gets a one-screen summary and may tip each guest.
 
-## Mission 1 — No Signal
-
-*"Sarah's river-alert display won't go online."* Inside the Circuit Club, her ESP32 display says `Connecting…` forever, even though she triple-checked the password.
-
-- **Investigate** the serial monitor on her laptop, the router's sticker, the ESP32 datasheet poster, Sarah's phone and her notebook (one of them is a red herring). The board's *Check cables* tab walks through reseating the USB cable and the display wiring.
-- **Challenge:** edit the Wi-Fi settings in Sarah's sketch and upload. A missing network, a wrong password and a successful connection each produce their own honest log.
-- **Concept:** 2.4 GHz vs 5 GHz Wi-Fi. What your phone can see is not what your device can see.
-
-## Mission 2 — The Pump That Won't Quit
-
-*"Mika's garden is flooding — the watering pump runs when it's supposed to be off."* Inside Mika's greenhouse, the screen says *Pump OFF* while the pump keeps humming.
-
-- **Investigate** the serial log on Mika's tablet, the relay module and its silkscreen, and the soil sensor (a red herring). The control box's *Multimeter* tab lets the player probe anywhere on the board.
-- **Challenge:** edit the lines that drive the relay pin, upload, and watch the pump, the relay LED and the screen. Half-fixes behave as they would on real hardware: the pump never runs, never stops, or runs briefly at every boot.
-- **Concept:** active-LOW relays. A signal's meaning is decided by the device that receives it.
-
-Missions 3–6 appear as locked signals in the world.
+A player named `DEV` starts a new farm with 50,000g and may shop out of hours. `?debug` exposes `window.__meadow` (`teleport(x, z, face)`, `player()`, `session()`, `farm()`, `profile()`).

@@ -1,6 +1,19 @@
 services:
   game:
-    build: .
+    build:
+      context: .
+      args:
+        # Baked into the client at build time; leave the Supabase pair empty to run on local saves.
+        NEXT_PUBLIC_RELAY_URL: ${NEXT_PUBLIC_RELAY_URL:-ws://localhost:2567}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     ports:
       - "3000:3000"
+    restart: unless-stopped
+  relay:
+    build: ./relay
+    environment:
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+    ports:
+      - "2567:2567"
     restart: unless-stopped

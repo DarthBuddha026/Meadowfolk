@@ -156,6 +156,9 @@ function makeInstanced(
   return mesh;
 }
 
+/** The tree shapes, shared with the farm's own trees (see FarmTrees), so both look alike. */
+export const TREE_GEO = { canopy: GEO.canopy, trunk: GEO.trunk, apple: GEO.apple };
+
 const LEAF_COLORS = ['#6f9c43', '#7faa4c', '#628f3d'];
 const HEDGE_COLORS = ['#7aa84e', '#86b356'];
 const ROCK_COLORS = ['#e9dfcd', '#d9cfbd', '#f2ebdd'];

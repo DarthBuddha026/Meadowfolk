@@ -28,3 +28,12 @@ export const cameraState = {
 export function adjustZoom(delta: number) {
   cameraState.zoom = Math.min(cameraState.maxZoom, Math.max(cameraState.minZoom, cameraState.zoom + delta));
 }
+
+/** Where each farm animal is wandering right now (set by the scene, read for "Pet" prompts). */
+export const animalPositions = new Map<number, { x: number; z: number }>();
+
+/** Build mode's camera focus (WASD pans it), on the ground. */
+export const buildFocus = { x: 0, z: 0 };
+
+/** Where the pointer meets the ground in build mode (for snapping walls and fences to an edge). */
+export const buildPointer = { x: 0, z: 0 };

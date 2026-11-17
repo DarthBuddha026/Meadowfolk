@@ -26,14 +26,15 @@ interface Props {
   /** Teleport instead of walking when the target jumps further than this. */
   teleportDistance?: number;
   showTag?: boolean;
+  /** Which way to look when nobody is near (a shopkeeper faces the street). */
+  fallbackFace?: Vec3;
 }
 
 /**
- * A scene-entity character. Walks to its target, turns to face whoever it is
- * talking to, and scales up slightly with a glow ring when speaking
- * (GUIDE.md speaker focus rule).
+ * A townsperson standing in the world. Walks to its target, turns to face the player when
+ * they come near, and scales up slightly with a glow ring when speaking.
  */
-export function Npc({ name, look, target, faceTarget, speaking, inConversation, teleportDistance = 9, showTag = true }: Props) {
+export function Npc({ name, look, target, faceTarget, speaking, inConversation, teleportDistance = 9, showTag = true, fallbackFace }: Props) {
   const body = useRef<RapierRigidBody>(null);
   const root = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
@@ -81,6 +82,7 @@ export function Npc({ name, look, target, faceTarget, speaking, inConversation, 
       const pdx = playerState.position.x - p.x;
       const pdz = playerState.position.z - p.z;
       if (Math.hypot(pdx, pdz) < 5) face = Math.atan2(pdx, pdz);
+      else if (fallbackFace) face = Math.atan2(fallbackFace[0] - p.x, fallbackFace[2] - p.z);
     }
     if (face !== null) {
       let diff = face - p.rot;
