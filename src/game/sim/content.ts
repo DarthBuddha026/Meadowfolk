@@ -1,8 +1,8 @@
 import type { ItemKey, Quality, Season } from './types';
 
 /**
- * Meadowfolk content tables: crops, items, kit pieces, animals, shops, land and villa tiers.
- * Data only. Prices follow the design's pacing target (first parcel by mid-Spring of year 1).
+ * Meadowfolk content tables: crops, items, kit pieces, animals, shops and villa tiers.
+ * Data only. (The whole farm is yours from the start; there is no land to buy.)
  */
 
 export const SEASONS: Season[] = ['spring', 'summer', 'fall', 'winter'];
@@ -68,7 +68,9 @@ const ITEM_LIST: ItemDef[] = [
   { id: 'egg', name: 'Egg', kind: 'produce', icon: '🥚', sell: 50, buy: 0 },
   // Trees: what the axe brings, and the seeds they grow from.
   { id: 'wood', name: 'Wood', kind: 'material', icon: '🪵', sell: 8, buy: 0 },
-  { id: 'seed-apple', name: 'Apple Seed', kind: 'seed', icon: '🍎', sell: 30, buy: 120, tree: 'apple' },
+  { id: 'apple-wood', name: 'Apple Wood', kind: 'material', icon: '🪵', sell: 14, buy: 0 },
+  { id: 'apple', name: 'Apple', kind: 'produce', icon: '🍎', sell: 40, buy: 0 },
+  { id: 'seed-apple', name: 'Apple Seed', kind: 'seed', icon: '🫘', sell: 30, buy: 120, tree: 'apple' },
   { id: 'acorn', name: 'Acorn', kind: 'seed', icon: '🌰', sell: 15, buy: 60, tree: 'oak' },
   { id: 'pinecone', name: 'Pine Cone', kind: 'seed', icon: '🌲', sell: 15, buy: 60, tree: 'pine' },
   { id: 'fertilizer', name: 'Fertilizer', kind: 'supply', icon: '🧺', sell: 0, buy: 25 },
@@ -112,6 +114,8 @@ export const PIECES: Record<string, PieceDef> = {
   'wall-door': { id: 'wall-door', name: 'Door Wall', layer: 'edge', villa: true, solid: true, buy: 80, tier: 1, color: 0 },
   path: { id: 'path', name: 'Pebble Path', layer: 'floor', buy: 5, tier: 1, color: 9, outdoor: true },
   fence: { id: 'fence', name: 'Fence', layer: 'edge', solid: true, buy: 10, tier: 1, color: 7, outdoor: true },
+  // A gate in a fence: people walk through (it swings open), animals don't.
+  'fence-gate': { id: 'fence-gate', name: 'Gate', layer: 'edge', buy: 30, tier: 1, color: 7, outdoor: true },
   lantern: { id: 'lantern', name: 'Lantern', layer: 'object', solid: true, buy: 30, tier: 1, color: 8, outdoor: true },
   'flower-pot': { id: 'flower-pot', name: 'Flower Pot', layer: 'object', solid: true, buy: 20, tier: 1, color: 1 },
   bench: { id: 'bench', name: 'Bench', layer: 'object', solid: true, buy: 60, tier: 1, color: 7 },
@@ -135,12 +139,13 @@ export const PIECES: Record<string, PieceDef> = {
   carpet: { id: 'carpet', name: 'Carpet', layer: 'object', indoor: true, size: [2, 1], buy: 90, tier: 1, color: 3 },
   desk: { id: 'desk', name: 'Study Table', layer: 'object', indoor: true, size: [2, 1], solid: true, buy: 110, tier: 1, color: 7 },
   'shipping-bin': { id: 'shipping-bin', name: 'Shipping Bin', layer: 'object', solid: true, buy: 0, tier: 1, color: 7, use: 'ship', outdoor: true },
-  coop: { id: 'coop', name: 'Chicken Coop', layer: 'object', size: [2, 2], solid: true, buy: 900, tier: 1, color: 1, use: 'coop', outdoor: true },
+  coop: { id: 'coop', name: 'Chicken Shed', layer: 'object', size: [2, 2], solid: true, buy: 900, tier: 1, color: 1, use: 'coop', outdoor: true },
   // Tier 2 kit: porch and garden.
   hedge: { id: 'hedge', name: 'Hedge', layer: 'object', solid: true, buy: 35, tier: 2, color: 2, outdoor: true },
   arch: { id: 'arch', name: 'Garden Arch', layer: 'object', buy: 120, tier: 2, color: 9, outdoor: true },
   // Tier 3: full decorative kit.
   fountain: { id: 'fountain', name: 'Fountain', layer: 'object', size: [2, 2], solid: true, buy: 600, tier: 3, color: 9, outdoor: true },
+  pond: { id: 'pond', name: 'Pond', layer: 'object', size: [5, 4], solid: true, buy: 400, tier: 1, color: 9, outdoor: true },
 };
 
 /** Kit pieces are carried as items `kit:<piece>` (the starter ones nobody sells too, once picked up). */
@@ -168,12 +173,16 @@ export interface TreeDef {
   /** Wood and seeds a grown one drops. */
   wood: number;
   seeds: number;
+  /** The wood it gives (plain wood unless it has its own). */
+  woodItem?: string;
+  /** Fruit a grown one bears: how many hang on it, and the nights they take to grow back once picked. */
+  fruit?: { item: string; n: number; nights: number };
   /** Nights per growth stage (seed → sprout → sapling → young → grown). */
   nightsPerStage: number;
 }
 
 export const TREES: Record<string, TreeDef> = {
-  apple: { id: 'apple', name: 'Apple Tree', seed: 'seed-apple', wood: 5, seeds: 2, nightsPerStage: 3 },
+  apple: { id: 'apple', name: 'Apple Tree', seed: 'seed-apple', wood: 5, seeds: 2, woodItem: 'apple-wood', fruit: { item: 'apple', n: 3, nights: 3 }, nightsPerStage: 3 },
   oak: { id: 'oak', name: 'Oak', seed: 'acorn', wood: 8, seeds: 2, nightsPerStage: 2 },
   pine: { id: 'pine', name: 'Pine', seed: 'pinecone', wood: 6, seeds: 3, nightsPerStage: 2 },
 };
@@ -247,6 +256,8 @@ export interface ShopDef {
   greeting: string;
   /** One seasonal line per season. */
   seasonal: Record<Season, string>;
+  /** Nothing for sale: the counter is for a chat with the keeper (the tavern). */
+  chat?: boolean;
 }
 
 export const SHOPS: Record<string, ShopDef> = {
@@ -278,6 +289,22 @@ export const SHOPS: Record<string, ShopDef> = {
       winter: 'Snow on a good roof just looks cosy.',
     },
   },
+  // Not a shop: a place to sit by the fire. Gold is earned and spent elsewhere.
+  tavern: {
+    id: 'tavern',
+    name: 'Tavern',
+    keeper: 'Tess',
+    open: 300, // 11:00
+    close: 1200, // 2:00, when the day ends
+    chat: true,
+    greeting: 'Pull up a stool. The fire is free, and so is the gossip.',
+    seasonal: {
+      spring: 'The vines across the road are budding. Come autumn, this whole street smells of grapes.',
+      summer: 'Long evenings, open windows. Half the town ends up out at the picnic tables.',
+      fall: 'Harvest at the vineyard this month. Everyone helps, everyone sings, nobody sings well.',
+      winter: 'Best seat in town is the one by the fire. I keep it warm for whoever comes in coldest.',
+    },
+  },
 };
 
 /** What each shop sells this season. */
@@ -297,25 +324,8 @@ export function shopStock(shop: string, season: Season, villaTier: number): stri
 }
 
 /* ------------------------------------------------------------------ */
-/* Land and villa tiers                                                */
+/* Villa tiers                                                         */
 /* ------------------------------------------------------------------ */
-
-export interface ParcelDef {
-  id: string;
-  name: string;
-  blurb: string;
-  price: number;
-  /** Grid columns [from, to) it covers (all rows). */
-  cols: [number, number];
-}
-
-export const PARCELS: ParcelDef[] = [
-  { id: 'orchard', name: 'The Orchard', blurb: 'West of the farm, with old apple trees already standing.', price: 3000, cols: [0, 10] },
-  { id: 'meadow', name: 'The Meadow', blurb: 'East of the farm: soft grass, good for animals.', price: 6000, cols: [32, 45] },
-];
-
-/** The home plot, owned from the start. */
-export const HOME_COLS: [number, number] = [10, 32];
 
 export interface VillaTierDef {
   tier: number;

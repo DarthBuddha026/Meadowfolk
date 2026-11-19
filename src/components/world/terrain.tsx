@@ -5,7 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import { RoundedBox } from '@react-three/drei';
 import { CuboidCollider, CylinderCollider, RigidBody } from '@react-three/rapier';
 import { ExtrudeGeometry, Shape, Vector2, type BufferGeometry, type Material, type Mesh, type MeshStandardMaterial } from 'three';
-import { RIDGE, TERRAIN, WORLD_BOUNDS, type Pt } from '@/game/data';
+import { TERRAIN, WORLD_BOUNDS, type Pt } from '@/game/data';
 import { BRIDGE_TOP, getTerrain, PATH_BEVEL, PATH_BEVEL_DROP, PATH_TOP, RIM_HEIGHT, WATER_LEVEL, type Loop } from '@/game/engine/terrain';
 import { getWorldMaterials } from './materials';
 
@@ -225,11 +225,6 @@ export function Terrain() {
   const halfX = (be + bw) / 2;
   const midZ = (bs - bn) / 2;
   const halfZ = (bs + bn) / 2;
-  // The ridge's two halves, either side of the cutting (the north gate closes the cutting itself).
-  const ridgeZ = (RIDGE.z[0] + RIDGE.z[1]) / 2;
-  const ridgeHalfZ = (RIDGE.z[1] - RIDGE.z[0]) / 2;
-  const cutW = RIDGE.cut.x - RIDGE.cut.half;
-  const cutE = RIDGE.cut.x + RIDGE.cut.half;
 
   return (
     <>
@@ -253,8 +248,6 @@ export function Terrain() {
         <CuboidCollider args={[halfX, 3, 0.5]} position={[midX, 3, bs + 0.5]} />
         <CuboidCollider args={[0.5, 3, halfZ]} position={[-bw - 0.5, 3, midZ]} />
         <CuboidCollider args={[0.5, 3, halfZ]} position={[be + 0.5, 3, midZ]} />
-        <CuboidCollider args={[(cutW + bw) / 2, 3, ridgeHalfZ]} position={[(cutW - bw) / 2, 3, ridgeZ]} />
-        <CuboidCollider args={[(RIDGE.east - cutE) / 2, 3, ridgeHalfZ]} position={[(RIDGE.east + cutE) / 2, 3, ridgeZ]} />
       </RigidBody>
     </>
   );

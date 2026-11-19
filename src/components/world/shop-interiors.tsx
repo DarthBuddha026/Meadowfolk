@@ -7,10 +7,11 @@ import { DoubleSide, MeshStandardMaterial } from 'three';
 import { shopRoom } from '@/game/data';
 import { useSession } from '@/game/state/session-store';
 import { getWorldMaterials } from './materials';
+import { Barrel } from './tavern';
 import { useCanvasTexture } from './use-canvas-texture';
 
 /**
- * The insides of the General Store and the Carpenter's workshop: rooms of their own off the map,
+ * The insides of the General Store, the Carpenter's workshop and the tavern: rooms of their own off the map,
  * in the same look as the house's (a room floating in the dark on a wooden slab, full-height back
  * and side walls with a wainscot, a low front wall with the door's wooden frame and the bright
  * outdoors glowing through it). The keeper stands behind the counter (see Shopkeepers); you shop
@@ -302,7 +303,7 @@ function StoreInside() {
   );
 }
 
-/** Bram's workshop: a tool wall, a plank rack, a workbench, a sawhorse, and kit samples by the door. */
+/** Bram's workshop: a tool wall, a plank rack, a workbench, and kit samples by the door. */
 function CarpenterInside() {
   const r = shopRoom('carpenter');
   const w = getWorldMaterials();
@@ -312,7 +313,6 @@ function CarpenterInside() {
     [0, r.counterZ - r.cz - 0.35, 4.4, 0.82],
     [-hw + 0.4, -0.3, 0.7, 2.6],
     [hw - 0.6, 0.6, 1.0, 2.0],
-    [-1.2, 1.9, 1.3, 0.5],
   ];
   const plankColors = ['#d39a62', '#c98a55', '#e0b07a', '#b97a48'];
   return (
@@ -381,18 +381,6 @@ function CarpenterInside() {
             </mesh>
           ))}
         </group>
-        {/* A sawhorse with a plank on it. */}
-        <group position={[-1.2, 0, 1.9]}>
-          {[-0.45, 0.45].map((x) => (
-            <group key={x} position={[x, 0, 0]}>
-              {[-1, 1].map((s) => (
-                <Box key={s} p={[0, 0.3, s * 0.12]} s={[0.07, 0.62, 0.07]} c={w.woodDark} r={0.01} />
-              ))}
-            </group>
-          ))}
-          <Box p={[0, 0.62, 0]} s={[1.2, 0.08, 0.12]} c={w.woodDark} r={0.01} />
-          <Box p={[0.1, 0.7, 0]} s={[1.4, 0.06, 0.32]} c={mat('#d39a62')} r={0.01} />
-        </group>
         {/* Kit samples by the door: a fence panel, a flower pot and a little bench. */}
         <group position={[hw - 1.0, 0, 2.2]}>
           {[-0.4, 0.4].map((x) => (
@@ -413,13 +401,246 @@ function CarpenterInside() {
   );
 }
 
-/** Both shop interiors; only drawn while you're inside a building. */
+/** A round table with three stools round it, and a mug or two on it. */
+function TavernTable({ x, z, turn = 0 }: { x: number; z: number; turn?: number }) {
+  const w = getWorldMaterials();
+  return (
+    <group position={[x, 0, z]} rotation={[0, turn, 0]}>
+      <mesh position={[0, 0.74, 0]} material={w.wood} castShadow receiveShadow>
+        <cylinderGeometry args={[0.5, 0.5, 0.07, 20]} />
+      </mesh>
+      <mesh position={[0, 0.37, 0]} material={w.woodDark} castShadow>
+        <cylinderGeometry args={[0.07, 0.09, 0.72, 10]} />
+      </mesh>
+      <mesh position={[0, 0.03, 0]} material={w.woodDark}>
+        <cylinderGeometry args={[0.28, 0.3, 0.05, 14]} />
+      </mesh>
+      {[0, 1, 2].map((k) => {
+        const a = (k / 3) * Math.PI * 2 + 0.4;
+        return (
+          <group key={k} position={[Math.cos(a) * 0.78, 0, Math.sin(a) * 0.78]}>
+            <mesh position={[0, 0.44, 0]} material={mat('#b5543f')} castShadow>
+              <cylinderGeometry args={[0.2, 0.2, 0.08, 14]} />
+            </mesh>
+            <mesh position={[0, 0.2, 0]} material={w.woodDark}>
+              <cylinderGeometry args={[0.04, 0.06, 0.4, 8]} />
+            </mesh>
+          </group>
+        );
+      })}
+      {[0.2, -0.18].map((mx, i) => (
+        <Mug key={i} p={[mx, 0.78, i ? 0.12 : -0.1]} />
+      ))}
+    </group>
+  );
+}
+
+/** A mug of cider with a head of foam. */
+function Mug({ p }: { p: V3 }) {
+  return (
+    <group position={p}>
+      <mesh position={[0, 0.07, 0]} material={mat('#e3a03a', { rough: 0.35 })} castShadow>
+        <cylinderGeometry args={[0.055, 0.055, 0.14, 12]} />
+      </mesh>
+      <mesh position={[0, 0.145, 0]} material={mat('#fff8ea')}>
+        <sphereGeometry args={[0.057, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+      </mesh>
+      <mesh position={[0.07, 0.07, 0]} rotation={[Math.PI / 2, 0, 0]} material={mat('#e3a03a', { rough: 0.35 })}>
+        <torusGeometry args={[0.038, 0.013, 6, 12]} />
+      </mesh>
+    </group>
+  );
+}
+
+/** A wine bottle: dark glass, a pale label and a cork. */
+function Bottle({ p, color }: { p: V3; color: string }) {
+  return (
+    <group position={p}>
+      <mesh position={[0, 0.13, 0]} material={mat(color, { rough: 0.25 })} castShadow>
+        <cylinderGeometry args={[0.06, 0.06, 0.26, 12]} />
+      </mesh>
+      <mesh position={[0, 0.3, 0]} material={mat(color, { rough: 0.25 })}>
+        <cylinderGeometry args={[0.022, 0.05, 0.1, 10]} />
+      </mesh>
+      <mesh position={[0, 0.36, 0]} material={mat('#c9a06a')}>
+        <cylinderGeometry args={[0.02, 0.02, 0.04, 8]} />
+      </mesh>
+      <mesh position={[0, 0.12, 0]} material={mat('#f3e7d2')}>
+        <cylinderGeometry args={[0.062, 0.062, 0.09, 12, 1, true]} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Tess's tavern: the bar across the back with barrels and a shelf of the vineyard's bottles behind
+ * it, stools along it, a stone fireplace on the west wall, round tables, a rug and a notice board.
+ * Nothing is for sale; you chat with Tess at the bar.
+ */
+function TavernInside() {
+  const r = shopRoom('tavern');
+  const w = getWorldMaterials();
+  const hd = r.d / 2;
+  const hw = r.w / 2;
+  const barZ = r.counterZ - r.cz - 0.35;
+  const tables: [number, number, number][] = [
+    [-2.9, 0.9, 0],
+    [3.1, 0.3, 0.6],
+    [3.4, 2.5, 1.1],
+    [-2.6, 2.7, 0.9],
+  ];
+  const solids: Solid[] = [
+    [0, barZ, 4.4, 0.82],
+    [-hw + 0.35, 0.2, 0.7, 2.0],
+    ...tables.map(([x, z]) => [x, z, 1.0, 1.0] as Solid),
+  ];
+  const bottles = ['#3f5a3a', '#5a2e4a', '#2f4a3f', '#6b3a5a', '#3f5a3a', '#4a2f5a'];
+  return (
+    <group>
+      <RoomShell id="tavern" solids={solids} />
+      <group position={[r.cx, 0, r.cz]}>
+        <Counter id="tavern" top={w.wood} front={mat('#7a4a32')} />
+        {/* On the bar: mugs, a bottle and a bowl of the vineyard's grapes. */}
+        <group position={[0, 0.83, barZ]}>
+          <Mug p={[-1.5, 0, 0.1]} />
+          <Mug p={[-1.25, 0, -0.08]} />
+          <Bottle p={[1.0, 0, 0]} color="#5a2e4a" />
+          <mesh position={[1.55, 0.05, 0.05]} material={mat('#f3e7d2')}>
+            <cylinderGeometry args={[0.2, 0.12, 0.1, 16]} />
+          </mesh>
+          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+            <mesh key={i} position={[1.55 + Math.cos(i * 0.9) * (i ? 0.1 : 0), 0.13 + (i ? 0 : 0.05), 0.05 + Math.sin(i * 0.9) * (i ? 0.1 : 0)]} material={mat('#7d4aa0', { rough: 0.45 })}>
+              <sphereGeometry args={[0.05, 8, 6]} />
+            </mesh>
+          ))}
+        </group>
+        {/* Stools along the front of the bar, leaving the middle free to lean on it. */}
+        {[-1.9, -1.15, 1.15, 1.9].map((x) => (
+          <group key={x} position={[x, 0, barZ + 0.75]}>
+            <mesh position={[0, 0.6, 0]} material={mat('#b5543f')} castShadow>
+              <cylinderGeometry args={[0.19, 0.19, 0.08, 14]} />
+            </mesh>
+            <mesh position={[0, 0.3, 0]} material={w.woodDark}>
+              <cylinderGeometry args={[0.04, 0.07, 0.6, 8]} />
+            </mesh>
+            <mesh position={[0, 0.25, 0]} rotation={[Math.PI / 2, 0, 0]} material={w.woodDark}>
+              <torusGeometry args={[0.13, 0.015, 6, 14]} />
+            </mesh>
+          </group>
+        ))}
+        {/* Behind the bar: barrels on a cradle either side, a shelf of bottles between them, the sign over it. */}
+        {[-1, 1].map((sx) => (
+          <group key={sx} position={[sx * 1.95, 0, -hd + 0.45]}>
+            <Box p={[0, 0.08, 0]} s={[0.8, 0.16, 0.6]} c={w.woodDark} r={0.02} />
+            <Barrel position={[0, 0.48, 0]} radius={0.32} height={0.7} lying />
+            <mesh position={[0, 0.42, 0.33]} rotation={[Math.PI / 2, 0, 0]} material={mat('#c9a06a', { rough: 0.4 })}>
+              <cylinderGeometry args={[0.03, 0.03, 0.12, 8]} />
+            </mesh>
+          </group>
+        ))}
+        <group position={[0, 0, -hd + 0.2]}>
+          {[-1, 1].map((sx) => (
+            <Box key={sx} p={[sx * 1.15, 1.0, 0]} s={[0.07, 1.4, 0.3]} c={w.woodDark} r={0.02} />
+          ))}
+          {[0.5, 0.95, 1.4].map((y, row) => (
+            <group key={y}>
+              <Box p={[0, y, 0]} s={[2.3, 0.05, 0.3]} c={w.wood} r={0.01} />
+              {[-0.85, -0.5, -0.15, 0.2, 0.55, 0.88].map((bx, i) => (
+                <Bottle key={bx} p={[bx, y + 0.025, 0]} color={bottles[(i + row * 2) % bottles.length]} />
+              ))}
+            </group>
+          ))}
+        </group>
+        <group position={[0, 2.12, -hd + 0.06]}>
+          <Sign text="TAVERN" width={2.0} />
+        </group>
+        {/* The fireplace on the west wall: a stone hearth with a log fire glowing in it. */}
+        <group position={[-hw + 0.35, 0, 0.2]} rotation={[0, Math.PI / 2, 0]}>
+          <Box p={[0, 0.75, 0]} s={[2.0, 1.5, 0.7]} c={mat('#b8aa96', { rough: 1 })} r={0.08} />
+          <Box p={[0, 1.95, -0.08]} s={[1.4, 0.9, 0.5]} c={mat('#a99a86', { rough: 1 })} r={0.06} />
+          <Box p={[0, 1.55, 0.06]} s={[2.2, 0.12, 0.7]} c={w.woodDark} r={0.03} />
+          <Box p={[0, 0.48, 0.2]} s={[1.0, 0.8, 0.34]} c={mat('#2b2230')} r={0.04} />
+          <Box p={[0, 0.07, 0.48]} s={[1.5, 0.12, 0.3]} c={mat('#a99a86', { rough: 1 })} r={0.03} />
+          {[-0.12, 0.12].map((lz, i) => (
+            <mesh key={i} position={[0, 0.18 + i * 0.06, 0.3 + lz * 0.3]} rotation={[0, 0, Math.PI / 2 + (i ? 0.35 : -0.35)]} material={mat('#7a5236')}>
+              <cylinderGeometry args={[0.06, 0.06, 0.62, 8]} />
+            </mesh>
+          ))}
+          {[
+            [0, 0.38, 0.2, 0.18],
+            [-0.15, 0.32, 0.13, 0.13],
+            [0.16, 0.31, 0.12, 0.12],
+          ].map(([fx, fy, fr, fh], i) => (
+            <mesh key={i} position={[fx, fy, 0.32]} material={mat(i ? '#ffb347' : '#ff7b39', { emissive: i ? '#ffc061' : '#ff6a2a', intensity: 2.2 })}>
+              <coneGeometry args={[fr * 0.6, fh * 2, 8]} />
+            </mesh>
+          ))}
+          {/* On the mantel: a jar of flowers and two candles. */}
+          <mesh position={[-0.6, 1.72, 0.1]} material={mat('#7fb3d5', { rough: 0.3 })}>
+            <cylinderGeometry args={[0.07, 0.06, 0.2, 10]} />
+          </mesh>
+          {[0.45, 0.7].map((cx) => (
+            <group key={cx} position={[cx, 1.61, 0.12]}>
+              <mesh position={[0, 0.09, 0]} material={mat('#fbf6ee')}>
+                <cylinderGeometry args={[0.03, 0.03, 0.18, 8]} />
+              </mesh>
+              <mesh position={[0, 0.21, 0]} material={mat('#ffd98a', { emissive: '#ffb347', intensity: 2 })}>
+                <sphereGeometry args={[0.025, 8, 6]} />
+              </mesh>
+            </group>
+          ))}
+        </group>
+        {/* A rug before the fire. */}
+        <RoundedBox args={[1.6, 0.03, 2.2]} radius={0.01} position={[-hw + 1.65, 0.035, 0.2]} receiveShadow>
+          <meshStandardMaterial color="#8c3b52" roughness={1} />
+        </RoundedBox>
+        <RoundedBox args={[1.3, 0.035, 1.9]} radius={0.01} position={[-hw + 1.65, 0.04, 0.2]} receiveShadow>
+          <meshStandardMaterial color="#d9a35a" roughness={1} />
+        </RoundedBox>
+        {tables.map(([x, z, turn]) => (
+          <TavernTable key={x + ',' + z} x={x} z={z} turn={turn} />
+        ))}
+        {/* The notice board on the east wall: pinned notes from the townsfolk. */}
+        <group position={[hw - 0.06, 1.45, -1.2]} rotation={[0, -Math.PI / 2, 0]}>
+          <Box p={[0, 0, 0]} s={[1.3, 0.9, 0.06]} c={w.woodDark} r={0.02} />
+          <Box p={[0, 0, 0.03]} s={[1.18, 0.78, 0.02]} c={mat('#c9a06a', { rough: 1 })} r={0.01} />
+          {[
+            [-0.36, 0.14, '#fbf6ee', 0.1],
+            [0.05, 0.18, '#f2cf6b', -0.08],
+            [0.38, 0.06, '#e7a3a8', 0.05],
+            [-0.18, -0.2, '#a9d47f', -0.12],
+            [0.24, -0.22, '#fbf6ee', 0.07],
+          ].map(([nx, ny, c, a], i) => (
+            <mesh key={i} position={[nx as number, ny as number, 0.045]} rotation={[0, 0, a as number]} material={mat(c as string)}>
+              <planeGeometry args={[0.28, 0.24]} />
+            </mesh>
+          ))}
+        </group>
+        {/* Wall lanterns on the side walls. */}
+        {[
+          [-hw + 0.08, 2.2, Math.PI / 2],
+          [-hw + 0.08, -2.2, Math.PI / 2],
+          [hw - 0.08, 1.6, -Math.PI / 2],
+        ].map(([lx, lz, rot]) => (
+          <group key={lx + ',' + lz} position={[lx, 1.75, lz]} rotation={[0, rot, 0]}>
+            <Box p={[0, 0, 0.06]} s={[0.06, 0.06, 0.16]} c={mat('#3a3440', { rough: 0.5 })} r={0.01} />
+            <Box p={[0, -0.05, 0.16]} s={[0.16, 0.22, 0.16]} c={mat('#ffe6a8', { emissive: '#ffb347', intensity: 1.6 })} r={0.03} />
+            <Box p={[0, 0.08, 0.16]} s={[0.2, 0.05, 0.2]} c={mat('#3a3440', { rough: 0.5 })} r={0.02} />
+          </group>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/** The shop interiors and the tavern's; only drawn while you're inside a building. */
 export function ShopInteriors() {
   const indoors = useSession((s) => s.indoors);
   return (
     <group visible={indoors}>
       <StoreInside />
       <CarpenterInside />
+      <TavernInside />
     </group>
   );
 }

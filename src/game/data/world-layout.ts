@@ -8,7 +8,7 @@ import type { Vec3 } from './types';
  */
 
 /** Walkable land: x from −west to east, z from −north to south (the beach's waterline). */
-export const WORLD_BOUNDS = { west: 24, east: 76, north: 40, south: 33.2 };
+export const WORLD_BOUNDS = { west: 24, east: 76, north: 44, south: 33.2 };
 
 /** Where the character-setup preview stands (the plaza). */
 export const PLAYER_SPAWN: Vec3 = [1.6, 0, 4];
@@ -27,14 +27,17 @@ export const CARPENTER_HOUSE = {
 export const GREEN_LOT = { x: -10.5, z: 5.95, w: 6.2, d: 5.7 };
 
 /**
- * The two shops of the first slice: where you stand to shop (`counter`), and where the shopkeeper
- * stands (`keeper`, facing `face` radians; 0 faces +z).
+ * The town's doors you can go through: the two shops of the first slice and the tavern. `counter`
+ * is where you stand at the door outside (the name is from when you shopped through it), `keeper`
+ * where the keeper stands (facing `face` radians; 0 faces +z).
  */
 export const SHOP_SPOTS: Record<string, { counter: [number, number]; keeper: [number, number]; face: number; model: string; tag: string }> = {
   // Rosa's General Store: the ground floor of the two-storey house north-west of the plaza.
   store: { counter: [-13.5, -2.5], keeper: [-15.3, -3.05], face: 0.35, model: '/models/villager-baker.glb', tag: 'Rosa · General Store' },
   // Bram the carpenter, at his workshop door.
   carpenter: { counter: [12, -3.4], keeper: [13.9, -3.9], face: -0.4, model: '/models/villager-neighbour.glb', tag: 'Bram · Carpenter' },
+  // Tess's tavern on the lot beside the tractor (`TAVERN` in terrain-plan.ts), its door facing the field road.
+  tavern: { counter: [-10.4, 7.85], keeper: [-10.4, 7.85], face: 0, model: '/models/villager-traveller.glb', tag: 'Tess · Tavern' },
 };
 
 /**
@@ -46,6 +49,7 @@ export const SHOP_SPOTS: Record<string, { counter: [number, number]; keeper: [nu
 export const SHOP_ROOMS: Record<string, { cx: number; cz: number; w: number; d: number }> = {
   store: { cx: 200, cz: -30, w: 10, d: 7 },
   carpenter: { cx: 220, cz: -30, w: 9, d: 7 },
+  tavern: { cx: 240, cz: -30, w: 11, d: 8 },
 };
 
 /** A shop room's walls and the spots in it. */

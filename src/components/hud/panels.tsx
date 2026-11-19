@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { ANIMALS, ITEMS, PARCELS, SHOPS, VILLA_TIERS, itemIcon, itemName, parseItem, sellPrice, shopStock } from '@/game/sim/content';
+import { ANIMALS, ITEMS, SHOPS, VILLA_TIERS, itemIcon, itemName, parseItem, sellPrice, shopStock } from '@/game/sim/content';
 import { animalsIn, binValue } from '@/game/sim/sim';
 import type { Bag } from '@/game/sim/types';
 import { playSound } from '@/game/engine/sound';
@@ -12,19 +12,25 @@ import {
   amHost,
   buy,
   buyAnimal,
-  buyParcel,
   buyTier,
   closeFarm,
   closeMorning,
   getAccount,
+  HOTBAR_SIZE,
+  hotbar,
+  hotbarUsable,
   joinFarm,
   leaveToTitle,
   leaveVisit,
   openFarm,
+  resetHotbar,
   seasonName,
+  setHotbarSlot,
   submit,
+  swapHotbarSlots,
   thanksFor,
   tipGuest,
+  TOOLS,
 } from '@/game/state/director';
 import { useFarmState } from '@/game/state/farm-store';
 import { useProfile } from '@/game/state/profile-store';
@@ -142,7 +148,7 @@ export function ShopPanel() {
   const [chickName, setChickName] = useState('');
   if (!farm || !shop) return null;
   const stock = shopStock(shopId, farm.season, host ? farm.villaTier : 3);
-  const tabs = shopId === 'store' ? ['Seeds & Supplies', 'Animals'] : ['Building Kit', 'Land & Villa'];
+  const tabs = shopId === 'store' ? ['Seeds & Supplies', 'Animals'] : ['Building Kit', 'Villa'];
   const nextTier = VILLA_TIERS.find((t) => t.tier === farm.villaTier + 1);
   const coops = farm.placements.filter((p) => p.piece === 'coop');
   const space = coops.reduce((s, c) => s + ANIMALS.chicken.capacity - animalsIn(farm, c.id).length, 0);
@@ -200,22 +206,12 @@ export function ShopPanel() {
                 Buy
               </button>
             </Row>
-            {!coops.length && <p className="px-1 text-sm font-semibold text-ink-soft">Chickens need a coop first — Bram the carpenter builds them.</p>}
+            {!coops.length && <p className="px-1 text-sm font-semibold text-ink-soft">Chickens need a chicken shed first: buy one from Bram the carpenter and he builds it by your pond.</p>}
             {!host && <p className="px-1 text-sm font-semibold text-ink-soft">Only {farm.ownerName} can add animals to this farm.</p>}
           </>
         )}
         {tab === 'more' && shopId === 'carpenter' && (
           <>
-            {PARCELS.map((p) => {
-              const owned = farm.parcels.includes(p.id);
-              return (
-                <Row key={p.id} icon="🗺️" name={p.name} sub={owned ? 'Yours' : <>{p.price.toLocaleString()}g · {p.blurb}</>}>
-                  <button className={small} disabled={!host || owned || gold < p.price} onClick={() => buyParcel(p.id)}>
-                    {owned ? 'Owned' : 'Buy'}
-                  </button>
-                </Row>
-              );
-            })}
             {nextTier ? (
               <Row icon="🏡" name={`Villa: ${nextTier.name}`} sub={<>{nextTier.price.toLocaleString()}g · {nextTier.unlocks}</>}>
                 <button className={small} disabled={!host || gold < nextTier.price} onClick={buyTier}>
@@ -225,7 +221,7 @@ export function ShopPanel() {
             ) : (
               <Row icon="🏰" name="Your villa is at its grandest" sub="Every footprint and kit piece is unlocked." />
             )}
-            {!host && <p className="px-1 text-sm font-semibold text-ink-soft">Land and villa upgrades are for {farm.ownerName} to buy.</p>}
+            {!host && <p className="px-1 text-sm font-semibold text-ink-soft">Villa upgrades are for {farm.ownerName} to buy.</p>}
           </>
         )}
       </div>
@@ -374,18 +370,130 @@ export function CoopPanel() {
 /* Bag                                                                 */
 /* ------------------------------------------------------------------ */
 
+/** What is being moved in the hotbar editor: a tool or item from the bag, or a hotbar slot. */
+type Picked = { key: string } | { slot: number } | null;
+const DRAG = 'application/x-meadowfolk-hotbar';
+
+/**
+ * Your bag, and the hotbar you arrange from it: drag a tool or item onto a slot (or tap it, then tap
+ * the slot), drag a slot onto another to swap them, × empties one; Reset lets it fill itself again.
+ */
 export function BagPanel() {
   const close = useClose();
-  const { bag, gold, name } = useProfile();
+  const { bag, gold, name, hotbar: chosen } = useProfile();
+  const farm = useFarmState();
+  const [picked, setPicked] = useState<Picked>(null);
   const items = bagEntries(bag);
+  const slots = hotbar(farm, bag);
+  const inBar = new Set(slots.map((s) => s.key));
+
+  const drop = (index: number, what: Picked) => {
+    if (!what) return;
+    if ('slot' in what) {
+      if (what.slot !== index) swapHotbarSlots(what.slot, index);
+    } else setHotbarSlot(index, what.key);
+    playSound('blip');
+    setPicked(null);
+  };
+  const dragData = (e: React.DragEvent, what: Picked) => {
+    e.dataTransfer.setData(DRAG, JSON.stringify(what));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const readDrag = (e: React.DragEvent): Picked => {
+    try {
+      return JSON.parse(e.dataTransfer.getData(DRAG)) as Picked;
+    } catch {
+      return null;
+    }
+  };
+  const pick = (what: Picked) => {
+    playSound('select');
+    setPicked((p) => (JSON.stringify(p) === JSON.stringify(what) ? null : what));
+  };
+  const isPicked = (what: Picked) => JSON.stringify(picked) === JSON.stringify(what);
+
   return (
-    <Modal onBackdrop={close}>
+    <Modal onBackdrop={close} width="max-w-2xl">
       <Header kicker="YOUR BAG" title={name} right={<Gold n={gold} className="text-lg" />} />
-      <div className="grid grid-cols-1 gap-2 overflow-y-auto px-5 py-4 sm:grid-cols-2">
-        {!items.length && <p className="text-sm font-semibold text-ink-soft">Empty.</p>}
-        {items.map(([k, n]) => (
-          <Row key={k} icon={itemIcon(k)} name={itemName(k)} sub={`× ${n}${sellPrice(k) ? ` · ${sellPrice(k)}g each` : ''}`} />
-        ))}
+      <div className="overflow-y-auto px-5 py-4">
+        {/* The hotbar: drop targets, numbered like the keys. */}
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <p className="font-display text-sm font-semibold">Hotbar</p>
+          <button className="btn btn--ghost px-2 py-0.5 text-xs" disabled={!chosen} onClick={() => (resetHotbar(), setPicked(null), playSound('close'))}>
+            Reset (fill itself)
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5" role="list" aria-label="Hotbar">
+          {Array.from({ length: HOTBAR_SIZE }, (_, i) => {
+            const s = slots[i];
+            const filled = !!s && s.kind !== 'empty';
+            const me = { slot: i };
+            return (
+              <div
+                key={i}
+                role="listitem"
+                draggable={filled}
+                onDragStart={(e) => dragData(e, me)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  drop(i, readDrag(e));
+                }}
+                onClick={() => (picked ? drop(i, picked) : filled && pick(me))}
+                title={filled ? s.label : 'Empty slot'}
+                className={`paper relative flex h-14 w-14 cursor-pointer select-none items-center justify-center transition ${isPicked(me) ? '-translate-y-1 bg-sun' : ''} ${picked && !isPicked(me) ? 'ring-2 ring-teal ring-offset-1' : ''} ${filled ? '' : 'border-dashed opacity-70'}`}
+              >
+                <span className={`text-2xl leading-none ${s?.disabled ? 'opacity-35 grayscale' : ''}`} aria-hidden>
+                  {filled ? s.icon : ''}
+                </span>
+                <span className="absolute left-1 top-0.5 font-display text-[10px] font-bold text-ink-soft">{i + 1}</span>
+                {filled && s.count !== undefined && <span className="absolute bottom-0.5 right-1 font-display text-xs font-bold">{s.count}</span>}
+                {filled && (
+                  <button
+                    aria-label={`Empty slot ${i + 1}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-ink bg-white text-[10px] font-bold leading-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHotbarSlot(i, null);
+                      setPicked(null);
+                      playSound('close');
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mb-3 mt-1.5 text-xs font-bold text-ink-soft">
+          {picked ? 'Now tap a slot to put it there (or tap it again to cancel).' : 'Drag a tool or seed onto a slot, or tap it and then a slot. Drag slots to swap them.'}
+        </p>
+
+        {/* Tools, then what's in the bag. Seeds and fertilizer can go in the hotbar. */}
+        <p className="mb-1 font-display text-sm font-semibold">Tools</p>
+        <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {(Object.keys(TOOLS) as (keyof typeof TOOLS)[]).map((k) => (
+            <div key={k} draggable onDragStart={(e) => dragData(e, { key: k })} onClick={() => pick({ key: k })} className={`cursor-pointer rounded-xl ${isPicked({ key: k }) ? 'ring-3 ring-sun' : ''}`}>
+              <Row icon={TOOLS[k].icon} name={TOOLS[k].label} sub={inBar.has(k) ? 'In your hotbar' : 'Not in your hotbar'} />
+            </div>
+          ))}
+        </div>
+        <p className="mb-1 font-display text-sm font-semibold">Items</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {!items.length && <p className="text-sm font-semibold text-ink-soft">Empty.</p>}
+          {items.map(([k, n]) => {
+            const usable = hotbarUsable(k);
+            const sub = `× ${n}${sellPrice(k) ? ` · ${sellPrice(k)}g each` : ''}${usable && inBar.has(k) ? ' · in hotbar' : ''}`;
+            return usable ? (
+              <div key={k} draggable onDragStart={(e) => dragData(e, { key: k })} onClick={() => pick({ key: k })} className={`cursor-pointer rounded-xl ${isPicked({ key: k }) ? 'ring-3 ring-sun' : ''}`}>
+                <Row icon={itemIcon(k)} name={itemName(k)} sub={sub} />
+              </div>
+            ) : (
+              <Row key={k} icon={itemIcon(k)} name={itemName(k)} sub={sub} />
+            );
+          })}
+        </div>
       </div>
       <Footer onClose={close} hint="I" />
     </Modal>

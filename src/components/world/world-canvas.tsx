@@ -30,7 +30,7 @@ import { PointerController } from './pointer-controller';
 import { PostEffects } from './post-effects';
 import { Scenery } from './scenery';
 import { Terrain } from './terrain';
-import { RemotePlayers, Shopkeepers } from './townsfolk';
+import { RemotePlayers, Shopkeepers, TavernPatrons } from './townsfolk';
 import { ShopInteriors } from './shop-interiors';
 import { FarmTrees } from './farm-trees';
 import { Villagers } from './villagers';
@@ -227,12 +227,14 @@ export function WorldCanvas({ onReady }: { onReady: () => void }) {
             <FarmPlot />
             <FarmTrees />
             <Animals />
-            <Villagers />
             <Wildlife />
           </Outdoors>
+          {/* Villagers show by zone themselves: the adults spend evenings inside the tavern. */}
+          <Villagers />
           {/* The shops' insides (rooms off the map) with their keepers behind the counters. */}
           <ShopInteriors />
           <Shopkeepers />
+          <TavernPatrons />
           <Placements />
           <Player />
         </Physics>

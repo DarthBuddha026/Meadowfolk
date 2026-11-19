@@ -4,7 +4,7 @@ import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { RoundedBox } from '@react-three/drei';
 import { CuboidCollider, RigidBody } from '@react-three/rapier';
-import { CanvasTexture, Color, DoubleSide, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, type Group, type Material, type Mesh } from 'three';
+import { CanvasTexture, Color, DoubleSide, MeshStandardMaterial, RepeatWrapping, SRGBColorSpace, Vector3, type Group, type Material, type Mesh } from 'three';
 import { PALETTE, PIECES } from '@/game/sim/content';
 import { EDGE_NORMAL, footprint, GRID, HOUSE_AREA, houseShell, inHouseArea, nearestEdge, shellDoors, placementCenter, tileCenter, villaBounds, villaDoors } from '@/game/sim/farm-map';
 import { placementProblem } from '@/game/sim/sim';
@@ -171,6 +171,112 @@ interface PieceProps {
   knob?: number;
 }
 
+/**
+ * A gate in a fence: two taller posts and a framed leaf with a cross brace, hinged on the left. It
+ * swings open as someone walks up and shuts behind them (people pass; animals don't).
+ */
+function Gate({ c }: { c: Material }) {
+  const leaf = useRef<Group>(null);
+  const here = useRef<Group>(null);
+  const at = useMemo(() => new Vector3(), []);
+  useFrame((_, dt) => {
+    if (!leaf.current || !here.current) return;
+    here.current.getWorldPosition(at);
+    const near = Math.hypot(playerState.position.x - at.x, playerState.position.z - at.z) < 1.6;
+    const target = near ? -1.45 : 0;
+    leaf.current.rotation.y += (target - leaf.current.rotation.y) * (1 - Math.exp(-Math.min(dt, 0.1) * 8));
+  });
+  return (
+    <group ref={here}>
+      {[-0.47, 0.47].map((x) => (
+        <Block key={x} b={[x, 0.48, 0, 0.13, 0.96, 0.13]} m={c} />
+      ))}
+      <group ref={leaf} position={[-0.4, 0, 0]}>
+        {[0.22, 0.62].map((y) => (
+          <Block key={y} b={[0.4, y, 0, 0.8, 0.07, 0.05]} m={c} />
+        ))}
+        {[0.03, 0.77].map((x) => (
+          <Block key={x} b={[x, 0.42, 0, 0.06, 0.62, 0.05]} m={c} />
+        ))}
+        <mesh position={[0.4, 0.42, 0]} rotation={[0, 0, 0.47]} material={c} castShadow>
+          <boxGeometry args={[0.86, 0.06, 0.045]} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+/** The pond's pebbles round its edge: [angle, size, colour], fixed so every pond looks the same. */
+const POND_STONES = Array.from({ length: 26 }, (_, i) => [
+  (i / 26) * Math.PI * 2 + (i % 3) * 0.05,
+  0.16 + ((i * 7) % 5) * 0.025,
+  ['#b9aea2', '#cfc6b8', '#a59c90'][i % 3],
+] as const);
+
+/**
+ * A farm pond over its 5×4 footprint: an oval of still water in a muddy bank ringed with pebbles,
+ * lily pads (one in flower) and a clump of cattails at its east end.
+ */
+function Pond() {
+  const water = mat('#6fbdcc', { rough: 0.12 });
+  const deep = mat('#4f9fb3', { rough: 0.2 });
+  const bank = mat('#8a7a5a');
+  const pad = mat('#5f9a3c');
+  const [rx, rz] = [2.25, 1.7];
+  return (
+    <group>
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[rx + 0.22, rz + 0.22, 1]} material={bank} receiveShadow>
+        <circleGeometry args={[1, 40]} />
+      </mesh>
+      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[rx, rz, 1]} material={water} receiveShadow>
+        <circleGeometry args={[1, 40]} />
+      </mesh>
+      <mesh position={[0.2, 0.038, -0.1]} rotation={[-Math.PI / 2, 0, 0]} scale={[rx * 0.55, rz * 0.5, 1]} material={deep}>
+        <circleGeometry args={[1, 32]} />
+      </mesh>
+      {POND_STONES.map(([a, s, color], i) => (
+        <mesh key={i} position={[Math.cos(a) * (rx + 0.12), 0.05, Math.sin(a) * (rz + 0.12)]} scale={[s * 1.3, s * 0.55, s]} rotation={[0, a, 0]} material={mat(color)} castShadow receiveShadow>
+          <sphereGeometry args={[1, 10, 8]} />
+        </mesh>
+      ))}
+      {[
+        [-1.1, 0.5, 0.32, 0.4],
+        [-0.4, -0.7, 0.26, 2.1],
+        [0.9, 0.6, 0.3, 4.2],
+        [-1.5, -0.2, 0.22, 1.2],
+      ].map(([x, z, r, rot], i) => (
+        <group key={i} position={[x, 0.045, z]} rotation={[0, rot, 0]}>
+          <mesh material={pad} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[r, 16, 0.3, Math.PI * 2 - 0.6]} />
+          </mesh>
+          {i === 0 && (
+            <mesh position={[0.05, 0.06, 0.02]} material={mat('#f4b6c8')}>
+              <sphereGeometry args={[0.09, 10, 8]} />
+            </mesh>
+          )}
+        </group>
+      ))}
+      {/* Cattails at the east end. */}
+      {[
+        [1.85, -0.55],
+        [2.0, -0.3],
+        [1.75, -0.15],
+        [2.1, -0.65],
+        [1.95, 0.05],
+      ].map(([x, z], i) => (
+        <group key={i} position={[x, 0, z]} rotation={[0.08 * (i % 2 ? 1 : -1), 0, 0.06 * (i - 2)]}>
+          <mesh position={[0, 0.5, 0]} material={mat('#6f9a3c')}>
+            <cylinderGeometry args={[0.018, 0.024, 1.0, 6]} />
+          </mesh>
+          <mesh position={[0, 0.88 + (i % 2) * 0.08, 0]} material={mat('#7a5236')}>
+            <capsuleGeometry args={[0.045, 0.16, 4, 8]} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
 function PieceShape({
   piece,
   color,
@@ -267,6 +373,8 @@ function PieceShape({
           ))}
         </group>
       );
+    case 'fence-gate':
+      return <Gate c={c} />;
     case 'lantern':
       return (
         <group>
@@ -455,6 +563,8 @@ function PieceShape({
           </mesh>
         </group>
       );
+    case 'pond':
+      return <Pond />;
     /* Home furniture: each is modelled over its whole footprint, front facing +z. */
     case 'kitchen-counter':
       return (

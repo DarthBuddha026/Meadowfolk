@@ -46,6 +46,10 @@ export interface Tree {
   /** Nights grown at this stage. */
   growth: number;
   hits: number;
+  /** Fruit hanging on a grown fruit tree; unset, it bears a full crop. */
+  fruit?: number;
+  /** Nights since it was picked bare. */
+  fruitNights?: number;
 }
 
 /** Every placed thing on the farm, villa pieces included: one schema. */
@@ -86,7 +90,7 @@ export interface HelpStats {
 export interface FarmState {
   /** Save schema version. */
   version: number;
-  /** The host's player id. Only the owner may build, buy land, spend or end the day. */
+  /** The host's player id. Only the owner may build, buy villa tiers, spend or end the day. */
   owner: PlayerId;
   ownerName: string;
   name: string;
@@ -107,8 +111,6 @@ export interface FarmState {
   storage: Bag;
   /** Shipping bin contents, paid out overnight. */
   bin: Bag;
-  /** Owned land parcels (the home plot is always owned). */
-  parcels: string[];
   villaTier: number;
   /** Clay palette index of the villa's roof. */
   roofColor: number;
@@ -130,6 +132,10 @@ export type Intent =
   | { t: 'plant'; c: number; r: number; seed: string; from: Source }
   | { t: 'fertilize'; c: number; r: number; from: Source }
   | { t: 'harvest'; c: number; r: number }
+  | { t: 'pick'; c: number; r: number }
+  /** DEV tools (the director only sends these for the DEV account): grow everything planted; ripen fruit. */
+  | { t: 'devGrow' }
+  | { t: 'devFruit' }
   | { t: 'clear'; c: number; r: number }
   | { t: 'ship'; item: ItemKey; n: number }
   | { t: 'deposit'; item: ItemKey; n: number }
@@ -141,7 +147,6 @@ export type Intent =
   | { t: 'remove'; id: number }
   | { t: 'recolor'; id: number; color: number }
   | { t: 'roof'; color: number }
-  | { t: 'buyParcel'; parcel: string }
   | { t: 'buyTier'; tier: number }
   | { t: 'buyAnimal'; kind: string; coop: number; name: string }
   | { t: 'tip'; to: PlayerId; items: Bag; gold: number }

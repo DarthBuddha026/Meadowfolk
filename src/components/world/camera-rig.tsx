@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Vector3 } from 'three';
+import { Vector3, type PerspectiveCamera } from 'three';
 import { SHOTS } from '@/game/data';
 import { GRID, HOUSE_AREA, villaBounds } from '@/game/sim/farm-map';
 import { shopRoom } from '@/game/data';
@@ -47,6 +47,20 @@ export function CameraRig() {
   }, [gl]);
 
   useFrame((state, rawDt) => {
+    // Map renders (`?debug`): `window.__meadowShot = { x, z, height, fov }` holds the camera straight
+    // above (x, z), north up, until it is cleared.
+    const shot = (window as unknown as { __meadowShot?: { x: number; z: number; height: number; fov: number } }).__meadowShot;
+    if (shot) {
+      const cam = state.camera as PerspectiveCamera;
+      cam.position.set(shot.x, shot.height, shot.z + 0.001);
+      cam.lookAt(shot.x, 0, shot.z);
+      if (cam.fov !== shot.fov || cam.far < shot.height * 2) {
+        cam.fov = shot.fov;
+        cam.far = shot.height * 2;
+        cam.updateProjectionMatrix();
+      }
+      return;
+    }
     const dt = Math.min(rawDt, 0.25);
     const s = useSession.getState();
     const p = playerState.position;

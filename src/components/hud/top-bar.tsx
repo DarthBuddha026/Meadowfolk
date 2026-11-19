@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { getLook } from '@/game/data';
 import { playSound } from '@/game/engine/sound';
-import { amHost, cropLabel, devSetTime, devToggleFreeze, seasonName } from '@/game/state/director';
+import { amHost, cropLabel, devGrowAll, devRipenFruit, devSetTime, devToggleFreeze, seasonName } from '@/game/state/director';
 import { clockText, useClock, useFarmState } from '@/game/state/farm-store';
 import { isDevName, useProfile } from '@/game/state/profile-store';
 import { useSession, type PanelId } from '@/game/state/session-store';
@@ -59,6 +59,16 @@ function DevTools() {
           ))}
           <button className={`${small} ${frozen ? '' : 'btn--ghost'}`} onClick={devToggleFreeze} title={frozen ? 'Let time run again' : 'Stop the clock'}>
             {frozen ? '▶ Unfreeze' : '❄ Freeze'}
+          </button>
+        </div>
+      )}
+      {!visiting && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <button className={`${small} btn--ghost`} onClick={devGrowAll} title="Ripen every crop and grow every planted tree, now">
+            🌱 Grow all
+          </button>
+          <button className={`${small} btn--ghost`} onClick={devRipenFruit} title="Every grown fruit tree ready to pick">
+            🍎 Ripen fruit
           </button>
         </div>
       )}

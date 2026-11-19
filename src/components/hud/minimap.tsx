@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { CARPENTER_HOUSE, FARM, HOUSES, SHOP_SPOTS, TERRAIN, type Pt } from '@/game/data';
+import { CARPENTER_HOUSE, FARM, HOUSES, SHOP_SPOTS, TAVERN, TERRAIN, VINE_ROWS, type Pt } from '@/game/data';
 import { GRID } from '@/game/sim/farm-map';
 import { getTerrain } from '@/game/engine/terrain';
 import { playerState } from '@/game/engine/world-state';
@@ -72,8 +72,11 @@ function drawJunction(): HTMLCanvasElement {
   g.beginPath();
   g.arc(TERRAIN.pond.center[0], TERRAIN.pond.center[1], TERRAIN.pond.radius, 0, Math.PI * 2);
   g.fill();
+  // The vineyard: soil striped with its rows of vines.
   g.fillStyle = '#8a6544';
   g.fillRect(FARM.x - FARM.w / 2, FARM.z - FARM.d / 2, FARM.w, FARM.d);
+  g.fillStyle = '#6f9c45';
+  for (const dz of VINE_ROWS) g.fillRect(FARM.x - FARM.w / 2 + 0.5, FARM.z + dz - 0.3, FARM.w - 1, 0.6);
 
   g.fillStyle = '#5f8f3c';
   for (const t of terrain.scatter.trees) {
@@ -94,6 +97,7 @@ function drawJunction(): HTMLCanvasElement {
     g.restore();
   };
   for (const h of HOUSES) building(h.x, h.z, h.w, h.d, h.rot, h.roof);
+  building(TAVERN.x, TAVERN.z, TAVERN.w, TAVERN.d, TAVERN.rot, TAVERN.roof);
   const c2 = CARPENTER_HOUSE;
   building(c2.x, c2.z, c2.w, c2.d, 0, c2.roof);
 

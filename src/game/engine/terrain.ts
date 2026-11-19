@@ -1,4 +1,4 @@
-import { CLEAR_ZONES, FARM, FORESTS, HOUSES, RIDGE, SIGNPOSTS, TERRAIN, type Pt } from '@/game/data/terrain-plan';
+import { CLEAR_ZONES, FARM, FARM_FRONT, FORESTS, HOUSES, LATE_PATHS, RETIRED_PATHS, RIDGE, SIGNPOSTS, TERRAIN, type Pt } from '@/game/data/terrain-plan';
 import { GREEN_LOT } from '@/game/data/world-layout';
 import { GRID, ORCHARD_TREES, tileCenter } from '@/game/sim/farm-map';
 
@@ -100,17 +100,16 @@ function inHouse(x: number, z: number, margin: number) {
   });
 }
 
-/**
- * Inside the walkable island, at least `margin` from its rim and from the ridge (the cutting through
- * the ridge narrows by `margin` too).
- */
+/** Inside the walkable island, at least `margin` from its rim (and short of the waterline). */
 export function inWalkableArea(x: number, z: number, margin = 0) {
   const { rimInner, beach } = TERRAIN;
-  if (x <= -rimInner.west + margin || x >= rimInner.east - margin || z <= -rimInner.north + margin || z >= beach.shore - 0.8 - margin) return false;
-  return !onRidge(x, z, margin);
+  return !(x <= -rimInner.west + margin || x >= rimInner.east - margin || z <= -rimInner.north + margin || z >= beach.shore - 0.8 - margin);
 }
 
-/** The ridge between the river and the farm (west of the river's turn), except its cutting. */
+/**
+ * Where the ridge between the river and the farm stood (west of the river's turn, but not its
+ * cutting). It's gone now; only the scatter still asks, so its layout stays as it was.
+ */
 function onRidge(x: number, z: number, margin = 0) {
   return z > RIDGE.z[0] - margin && z < RIDGE.z[1] + margin && x < RIDGE.east + margin && Math.abs(x - RIDGE.cut.x) >= RIDGE.cut.half - margin;
 }
@@ -173,11 +172,66 @@ function onBridge(x: number, z: number, margin = 0) {
   });
 }
 
-/** The raised rim round the island, and the ridge between the river and the north bank (but not its cutting). */
+/** The raised rim round the island (west, north and east). */
 export function isRim(x: number, z: number) {
   const { rimInner } = TERRAIN;
-  if (x < -rimInner.west || x > rimInner.east || z < -rimInner.north) return true;
-  return onRidge(x, z);
+  return x < -rimInner.west || x > rimInner.east || z < -rimInner.north;
+}
+
+/** The rim as the scatter knew it, with the old ridge: props are laid out against this, then the ridge's are dropped. */
+const wasRim = (x: number, z: number) => isRim(x, z) || onRidge(x, z);
+
+/** The paths props are scattered round: all but the late ones (which they're cleared off afterwards). */
+const SCATTER_PATHS = TERRAIN.paths.filter((p) => !LATE_PATHS.includes(p));
+
+/** The path list as the town's scatter has always known it: retired paths back in their old slots. */
+const FROZEN_PATHS = (() => {
+  const list: Path[] = [...SCATTER_PATHS];
+  for (const r of RETIRED_PATHS) list.splice(r.index, 0, r.path as Path);
+  return list;
+})();
+
+/** Where the river runs at x (its centreline, for the stretch west of where it turns south). */
+function riverZAt(x: number) {
+  const pts = TERRAIN.river.points;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i];
+    const [bx, bz] = pts[i + 1];
+    if (x >= ax && x <= bx) return az + ((bz - az) * (x - ax)) / (bx - ax || 1);
+  }
+  return pts[0][1];
+}
+
+/** In the strip between the farm's front and the river, west of the forest (laid out by hand: FARM_FRONT). */
+const inFarmFront = (x: number, z: number) => x > -TERRAIN.rimInner.west - 1 && x < FARM_FRONT.east && z > FARM_FRONT.z0 && z < riverZAt(x);
+
+/** A steady pseudo-random number in [0, 1) from two numbers. */
+const hash2 = (a: number, b: number) => {
+  const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return v - Math.floor(v);
+};
+
+/** The farm front's trees: the forest block west of the road (a jittered grid) and the two tree lines east of it. */
+function farmFrontTrees(lamps: ScatterItem[]): ScatterItem[] {
+  const out: ScatterItem[] = [];
+  const clear = (x: number, z: number, gap: number) =>
+    distToRiver(x, z) > TERRAIN.river.halfWidth + gap && distToPaths(x, z) > 0.9 && lamps.every((l) => Math.hypot(l.x - x, l.z - z) > 1.3);
+  const { forest, treeLines } = FARM_FRONT;
+  for (let x = forest.x0; x <= forest.x1; x += forest.spacing) {
+    for (let z = FARM_FRONT.z0 + 0.8, row = 0; z < -12; z += forest.spacing * 0.87, row++) {
+      const jx = x + (row % 2 ? forest.spacing / 2 : 0) + (hash2(x, z) - 0.5) * 0.8;
+      const jz = z + (hash2(z, x) - 0.5) * 0.6;
+      if (jx > forest.x1 + 0.4 || !clear(jx, jz, 1.2)) continue;
+      out.push({ x: jx, z: jz, y: 0, s: 0.85 + hash2(jx, jz) * 0.3, rot: hash2(jz, jx) * Math.PI * 2, v: Math.floor(hash2(jx + 1, jz) * 3) });
+    }
+  }
+  for (const z of treeLines.z) {
+    for (let x = treeLines.x0; x <= treeLines.x1; x += treeLines.spacing) {
+      if (!clear(x, z, 1)) continue;
+      out.push({ x, z, y: 0, s: 0.92, rot: hash2(x, z) * Math.PI * 2, v: 1 });
+    }
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -407,10 +461,15 @@ function scatter(
   return items;
 }
 
-function lanternsAlongPaths(): ScatterItem[] {
+/**
+ * Lanterns every so often beside the paths. By default along the frozen path list, exactly as the town
+ * has always had them; given LATE_PATHS, just those paths' own (spaced from `others`).
+ */
+function lanternsAlongPaths(paths: readonly Path[] = FROZEN_PATHS, rimAt = wasRim, others: ScatterItem[] = []): ScatterItem[] {
+  const late = paths === LATE_PATHS;
   const out: ScatterItem[] = [];
-  const near = (x: number, z: number) => out.some((l) => Math.hypot(l.x - x, l.z - z) < 3.2);
-  TERRAIN.paths.forEach((path, pi) => {
+  const near = (x: number, z: number) => [...others, ...out].some((l) => Math.hypot(l.x - x, l.z - z) < 3.2);
+  paths.forEach((path, pi) => {
     let side = pi % 2 === 0 ? 1 : -1;
     for (let s = 0; s < path.points.length - 1; s++) {
       const [ax, az] = path.points[s];
@@ -424,19 +483,20 @@ function lanternsAlongPaths(): ScatterItem[] {
         const z = az + ((bz - az) * d) / len + nz * off * side;
         side *= -1;
         if (Math.hypot(x, z) < TERRAIN.plaza.radius + 0.3) continue;
-        if (distToRiver(x, z) < TERRAIN.river.halfWidth + 0.8 || isRim(x, z) || inHouse(x, z, 0.6) || near(x, z)) continue;
-        if (distToPaths(x, z) < 0.25 || distToWalkways(x, z) < 0.8) continue;
+        if (distToRiver(x, z) < TERRAIN.river.halfWidth + 0.8 || rimAt(x, z) || inHouse(x, z, 0.6) || near(x, z)) continue;
+        if (distToPaths(x, z, late ? TERRAIN.paths : FROZEN_PATHS) < 0.25 || distToWalkways(x, z) < 0.8) continue;
         out.push({ x, z, y: 0, s: 1, rot: 0, v: 0 });
       }
     }
   });
   // Ring of lanterns around the plaza, skipping path mouths.
+  if (late) return out;
   for (let k = 0; k < 10; k++) {
     const a = (k / 10) * Math.PI * 2 + 0.3;
     const r = TERRAIN.plaza.radius + 0.5;
     const x = TERRAIN.plaza.center[0] + Math.sin(a) * r;
     const z = TERRAIN.plaza.center[1] + Math.cos(a) * r;
-    const onPath = TERRAIN.paths.some((p) => distToPolyline(x, z, p.points) < p.halfWidth + 0.4);
+    const onPath = FROZEN_PATHS.some((p) => distToPolyline(x, z, p.points) < p.halfWidth + 0.4);
     if (!onPath && !near(x, z)) out.push({ x, z, y: 0, s: 1, rot: 0, v: 0 });
   }
   return out;
@@ -571,7 +631,7 @@ const southOfRidge = (pts: readonly Pt[]) => pts.every(([, z]) => z > RIDGE.z[1]
 const clearOfCutting = (p: { x: number; z: number }) =>
   Math.abs(p.x - RIDGE.cut.x) > RIDGE.cut.half + 1 || p.z < RIDGE.z[0] - 1 || p.z > RIDGE.z[1] + 0.5;
 
-/** The old apple trees in the orchard parcel, each standing on its own farm tile. */
+/** The old apple trees in the orchard, each standing on its own farm tile. */
 function orchardTrees(): ScatterItem[] {
   return ORCHARD_TREES.map(([c, r], i) => {
     const [x, z] = tileCenter(c, r);
@@ -595,6 +655,8 @@ export function getTerrain(): TerrainData {
   /** Props stay on the grass, off the beach (and rim trees only on the rim as it is now). */
   const onGrass = (p: ScatterItem) => p.z < beachEdge(p.x) - 0.6 && (p.y === 0 || isRim(p.x, p.z));
 
+  // Lanterns as the town's scatter has always known them (retired paths and all); their final list
+  // drops the retired paths' own and adds the late paths'.
   const lanterns = lanternsAlongPaths().filter(clearOfSignposts(1.3));
   const coreRim = (x: number, z: number) => Math.abs(x) > CORE.rimX || Math.abs(z) > CORE.rimZ;
   const core = dress(
@@ -603,7 +665,7 @@ export function getTerrain(): TerrainData {
       box: { cx: 0, cz: 0, hx: CORE.x - 0.8, hz: CORE.z - 0.8 },
       interior: (x, z) => !coreRim(x, z) && Math.abs(x) < CORE.x && Math.abs(z) < CORE.z,
       rim: (x, z) => coreRim(x, z) && Math.abs(x) < CORE.x - 0.9 && Math.abs(z) < CORE.z - 0.9,
-      paths: TERRAIN.paths.filter((p) => southOfRidge(p.points)),
+      paths: SCATTER_PATHS.filter((p) => southOfRidge(p.points)),
       walkways: TERRAIN.walkways.filter(southOfRidge),
       near: [],
       count: { trees: 80, rimTrees: 44, pathHedges: 30, bushes: 45, flowers: 260, tufts: 320, rocks: 46, lilies: 22, cattails: 16 },
@@ -618,9 +680,9 @@ export function getTerrain(): TerrainData {
     mulberry32(29),
     {
       box: { cx: -0.4, cz: (northZ - extent.north + 0.8) / 2, hx: 25, hz: (northZ + extent.north - 0.8) / 2 },
-      interior: (x, z) => z < northZ && x < RIDGE.east && !isRim(x, z) && !onFarmGrid(x, z, 0.4),
-      rim: (x, z) => z < northZ && x < RIDGE.east && isRim(x, z) && x > -extent.west + 0.9 && z > -extent.north + 0.9,
-      paths: TERRAIN.paths,
+      interior: (x, z) => z < northZ && x < RIDGE.east && !wasRim(x, z) && !onFarmGrid(x, z, 0.4),
+      rim: (x, z) => z < northZ && x < RIDGE.east && wasRim(x, z) && x > -extent.west + 0.9 && z > -extent.north + 0.9,
+      paths: FROZEN_PATHS,
       walkways: TERRAIN.walkways,
       near: [...core.trees, ...orchard],
       count: { trees: 4, rimTrees: 26, pathHedges: 2, bushes: 6, flowers: 30, tufts: 40, rocks: 0, lilies: 0, cattails: 0 },
@@ -630,20 +692,26 @@ export function getTerrain(): TerrainData {
 
   // (The orchard's apple trees are farm trees now — see FarmTrees — so they can be chopped.)
   // East of the river: each region its own seed. The woods are thick; the town hall's lawns open.
-  const eastPaths = TERRAIN.paths;
-  const forest = dress(
-    mulberry32(41),
-    {
-      box: { cx: 50.5, cz: -25.5, hx: 26.3, hz: 15.3 },
-      interior: (x, z) => x > RIDGE.east + 0.4 && z < -11 && inWalkableArea(x, z) && !onFarmGrid(x, z, 1),
-      rim: (x, z) => isRim(x, z) && z < -11 && x > RIDGE.east && x < extent.east - 0.9 && z > -extent.north + 0.9,
-      paths: eastPaths,
-      walkways: TERRAIN.walkways,
-      near: [...north.trees],
-      count: { trees: 150, rimTrees: 34, pathHedges: 6, bushes: 34, flowers: 90, tufts: 130, rocks: 12, lilies: 0, cattails: 8 },
-    },
-    lanterns
-  );
+  const eastPaths = FROZEN_PATHS;
+  // (The forest grew north with the farm; the regions beside it keep spacing from it as it was.)
+  const forestOn = (paths: readonly Path[], box: Box = { cx: 50.5, cz: -27.5, hx: 26.3, hz: 17.3 }) =>
+    dress(
+      mulberry32(41),
+      {
+        box,
+        interior: (x, z) => x > RIDGE.east + 0.4 && z < -11 && inWalkableArea(x, z) && !onFarmGrid(x, z, 1),
+        rim: (x, z) => isRim(x, z) && z < -11 && x > RIDGE.east && x < extent.east - 0.9 && z > -extent.north + 0.9,
+        paths,
+        walkways: TERRAIN.walkways,
+        near: [...north.trees],
+        count: { trees: 150, rimTrees: 34, pathHedges: 6, bushes: 34, flowers: 90, tufts: 130, rocks: 12, lilies: 0, cattails: 8 },
+      },
+      lanterns
+    );
+  // The forest grows over the retired path to it (so no bare lane is left); the regions beside it
+  // keep their spacing from the forest as it was, so they don't move.
+  const forest = forestOn(SCATTER_PATHS);
+  const forestAsWas = forestOn(FROZEN_PATHS, { cx: 50.5, cz: -25.5, hx: 26.3, hz: 15.3 });
   const eastTown = dress(
     mulberry32(53),
     {
@@ -652,7 +720,7 @@ export function getTerrain(): TerrainData {
       rim: (x, z) => isRim(x, z) && x > 29 && z > -11 && z < beachEdge(x) - 0.5 && x < extent.east - 0.9,
       paths: eastPaths,
       walkways: TERRAIN.walkways,
-      near: [...forest.trees],
+      near: [...forestAsWas.trees],
       count: { trees: 10, rimTrees: 16, pathHedges: 10, bushes: 16, flowers: 90, tufts: 110, rocks: 10, lilies: 6, cattails: 8 },
     },
     lanterns
@@ -665,13 +733,24 @@ export function getTerrain(): TerrainData {
       rim: () => false,
       paths: eastPaths,
       walkways: TERRAIN.walkways,
-      near: [...forest.trees, ...eastTown.trees],
+      near: [...forestAsWas.trees, ...eastTown.trees],
       count: { trees: 44, rimTrees: 0, pathHedges: 0, bushes: 10, flowers: 30, tufts: 50, rocks: 0, lilies: 0, cattails: 0 },
     },
     lanterns
   );
   const east = [forest, eastTown, backWood];
-  const trees = [...core.trees.filter(clearOfCutting), ...north.trees, ...east.flatMap((r) => r.trees)].filter(onGrass);
+  // The late paths' lanterns, and props cleared off those paths (and the old ridge's rim trees,
+  // which `onGrass` drops now that the ridge is level ground).
+  const offRetired = (p: ScatterItem) => RETIRED_PATHS.every((r) => distToPolyline(p.x, p.z, r.path.points) > r.path.halfWidth + 1);
+  const keptLanterns = lanterns.filter(offRetired);
+  const lateLanterns = lanternsAlongPaths(LATE_PATHS, isRim, keptLanterns).filter(clearOfSignposts(1.3));
+  const offLate = (p: ScatterItem) =>
+    LATE_PATHS.every((lp) => distToPolyline(p.x, p.z, lp.points) > lp.halfWidth + 0.9) && lateLanterns.every((l) => Math.hypot(l.x - p.x, l.z - p.z) > 1);
+  // The farm front is laid out by hand: its scattered trees and bushes give way to planted rows.
+  const front = farmFrontTrees([...keptLanterns, ...lateLanterns]);
+  const offFront = (p: ScatterItem) => !inFarmFront(p.x, p.z);
+  const clearOfFront = (p: ScatterItem) => front.every((t) => Math.hypot(t.x - p.x, t.z - p.z) > 0.8);
+  const trees = [...[...core.trees.filter(clearOfCutting), ...north.trees, ...east.flatMap((r) => r.trees)].filter(onGrass).filter(offLate).filter(offFront), ...front];
   cached = {
     land: contours(g, land, 3),
     beach: contours(g, sand, 3),
@@ -681,14 +760,14 @@ export function getTerrain(): TerrainData {
     rimHeight: RIM_HEIGHT,
     scatter: {
       trees,
-      hedges: [...core.hedges.filter(clearOfCutting), ...north.hedges, ...east.flatMap((r) => r.hedges)].filter(onGrass),
-      flowers: [...core.flowers, ...north.flowers, ...east.flatMap((r) => r.flowers)].filter(offGreenhouse).filter(onGrass),
-      tufts: [...core.tufts, ...north.tufts, ...east.flatMap((r) => r.tufts)].filter(offGreenhouse).filter(onGrass),
-      rocks: [...core.rocks, ...east.flatMap((r) => r.rocks)].filter(onGrass),
-      lanterns: lanterns.filter((l) => offGreenhouse(l) && !onFarmGrid(l.x, l.z, 0.5) && l.z < beachEdge(l.x) - 0.6),
+      hedges: [...core.hedges.filter(clearOfCutting), ...north.hedges, ...east.flatMap((r) => r.hedges)].filter(onGrass).filter(offLate).filter(offFront),
+      flowers: [...core.flowers, ...north.flowers, ...east.flatMap((r) => r.flowers)].filter(offGreenhouse).filter(onGrass).filter(offLate).filter(clearOfFront),
+      tufts: [...core.tufts, ...north.tufts, ...east.flatMap((r) => r.tufts)].filter(offGreenhouse).filter(onGrass).filter(offLate).filter(clearOfFront),
+      rocks: [...core.rocks, ...east.flatMap((r) => r.rocks)].filter(onGrass).filter(offLate).filter(offFront),
+      lanterns: [...keptLanterns, ...lateLanterns].filter((l) => offGreenhouse(l) && !onFarmGrid(l.x, l.z, 0.5) && l.z < beachEdge(l.x) - 0.6),
       lilies: [...core.lilies, ...east.flatMap((r) => r.lilies)],
       cattails: [...core.cattails, ...east.flatMap((r) => r.cattails)],
-      apples: [...applesUnder(core.trees), ...applesUnder(north.trees), ...applesUnder(eastTown.trees)].filter(onGrass),
+      apples: [...applesUnder(core.trees), ...applesUnder(north.trees), ...applesUnder(eastTown.trees)].filter(onGrass).filter(offLate).filter(offFront),
     },
   };
   return cached;

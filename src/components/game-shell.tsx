@@ -5,10 +5,12 @@ import dynamic from 'next/dynamic';
 import { AnimatePresence } from 'framer-motion';
 import { attachInput, clearMovement, onInputAction } from '@/game/engine/input';
 import { playSound, setMuted, unlockAudio } from '@/game/engine/sound';
-import { playerState, requestTeleport } from '@/game/engine/world-state';
+import { animalPositions, playerState, requestTeleport } from '@/game/engine/world-state';
 import {
   applyTool,
   bootAccount,
+  devSetTime,
+  showTitleFarm,
   enterOwnFarm,
   interact,
   joinFarm,
@@ -69,6 +71,10 @@ export function GameShell() {
         session: () => useSession.getState(),
         farm: getFarm,
         profile: () => useProfile.getState(),
+        /** Where the farm animals are (id → x, z). */
+        animals: () => Object.fromEntries(animalPositions),
+        /** DEV only: set the clock to in-game minutes since 6:00. */
+        setTime: devSetTime,
       },
     });
   }, []);
@@ -81,6 +87,11 @@ export function GameShell() {
   useEffect(() => {
     if (screen === 'loading' && worldReady && bootDone) setScreen('title');
   }, [screen, worldReady, bootDone, setScreen]);
+
+  // The title screen shows your farm on the north bank (see showTitleFarm).
+  useEffect(() => {
+    if (screen === 'title') void showTitleFarm();
+  }, [screen]);
 
   // Arriving on your own farm.
   useEffect(() => {

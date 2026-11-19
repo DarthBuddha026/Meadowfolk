@@ -1,12 +1,21 @@
-import { HOME_COLS, PARCELS, PIECES, villaTier, type PieceDef } from './content';
+import { PIECES, villaTier, type PieceDef } from './content';
 import type { FarmState, Placement } from './types';
 
 /**
  * The farm grid: one flat layer of 1 m tiles on the north bank, past the river from the town.
  * Columns run west → east (+x), rows north → south (+z). Every tile the player can build or farm
- * on is at one height (y = 0).
+ * on is at one height (y = 0). All of it is the owner's from the start.
  */
-export const GRID = { x0: -22.5, z0: -39, cols: 45, rows: 16, cell: 1 };
+export const GRID = { x0: -22.5, z0: -43, cols: 45, rows: 20, cell: 1 };
+
+/**
+ * Saves before v10 had 16 rows from z = −39: the farm grew 4 rows north, so their rows sit this
+ * many further down now (the same ground; see migrateFarm).
+ */
+export const ROWS_ADDED_NORTH = 4;
+
+/** The row the house's shell started on in v10 saves (it moved up to row 1 in v11). */
+export const HOUSE_ROW_V10 = 5;
 
 export const tileIndex = (c: number, r: number) => r * GRID.cols + c;
 export const inGrid = (c: number, r: number) => c >= 0 && r >= 0 && c < GRID.cols && r < GRID.rows;
@@ -21,27 +30,33 @@ export function tileAt(x: number, z: number): [number, number] {
   return [Math.floor((x - GRID.x0) / GRID.cell), Math.floor((z - GRID.z0) / GRID.cell)];
 }
 
-/** Old apple trees already standing in the orchard parcel; their tiles can't be farmed or built on. */
+/** Old apple trees already standing in the orchard (the farm's west end). */
 export const ORCHARD_TREES: [number, number][] = [
-  [2, 3], [5, 2], [8, 3],
-  [3, 7], [6, 6], [8, 8],
-  [2, 11], [5, 10], [7, 13],
+  [2, 7], [5, 6], [8, 7],
+  [3, 11], [6, 10], [8, 12],
+  [2, 15], [5, 14], [7, 17],
 ];
 
+/** Where the farm's pond lies (its north-west tile), in the north-east corner behind the house. */
+export const POND_TILE: [number, number] = [38, 1];
+
+/**
+ * The chicken yard: the farm's north-east corner round the pond, fenced on its west and south sides
+ * (the farm's own fence closes the north and east), with a gate in the south fence at `gate`.
+ * Columns [c0, c1), rows [r0, r1).
+ */
+export const CHICKEN_YARD = { c0: 33, c1: 45, r0: 0, r1: 8, gate: 36 };
+
+/** Where Bram builds the chicken shed when you buy it: beside the pond, in the yard, facing south. */
+export const COOP_TILE: [number, number] = [34, 1];
+
 /** The farm gate, where the north road enters the grid, and where the hero wakes up. */
-export const FARM_GATE: [number, number] = [18, 15];
+export const FARM_GATE: [number, number] = [18, 19];
 export const WAKE_TILE: [number, number] = [18, 6];
 
-export function parcelOf(c: number): string {
-  if (c >= HOME_COLS[0] && c < HOME_COLS[1]) return 'home';
-  return PARCELS.find((p) => c >= p.cols[0] && c < p.cols[1])?.id ?? 'none';
-}
-
-export function isOwned(farm: FarmState, c: number, r: number): boolean {
-  if (inHouseArea(c, r)) return true;
-  if (!inGrid(c, r)) return false;
-  const parcel = parcelOf(c);
-  return parcel === 'home' || farm.parcels.includes(parcel);
+/** The whole farm grid is the owner's, and so are the house's rooms. */
+export function isOwned(_farm: FarmState, c: number, r: number): boolean {
+  return inHouseArea(c, r) || inGrid(c, r);
 }
 
 export function inVilla(farm: FarmState, c: number, r: number, tier = farm.villaTier): boolean {
@@ -74,6 +89,51 @@ export function placementsAt(farm: FarmState, c: number, r: number): Placement[]
     const piece = PIECES[p.piece];
     if (!piece) return false;
     return footprint(piece, p.c, p.r, p.rot).some(([fc, fr]) => fc === c && fr === r);
+  });
+}
+
+/**
+ * Whether an animal can walk straight from one point to another on the farm: it stays on the grid
+ * (inside the farm's fence), crosses no fence, gate or wall between tiles, and steps on no solid
+ * piece (a coop, a bench) or tree. Ponds are fine: hens swim. Hens use it to pick where to wander next.
+ */
+export function animalCanWalk(farm: FarmState, x0: number, z0: number, x1: number, z1: number): boolean {
+  const pair = (a: number, b: number, c: number, d: number) => (a < c || (a === c && b < d) ? `${a},${b}|${c},${d}` : `${c},${d}|${a},${b}`);
+  const edges = new Set<string>();
+  for (const p of farm.placements) {
+    if (PIECES[p.piece]?.layer !== 'edge') continue;
+    const [dx, dz] = EDGE_NORMAL[((p.rot % 4) + 4) % 4];
+    edges.add(pair(p.c, p.r, p.c + dx, p.r + dz));
+  }
+  const solidAt = (c: number, r: number) =>
+    (farm.trees ?? []).some((t) => t.c === c && t.r === r) ||
+    placementsAt(farm, c, r).some((p) => PIECES[p.piece]?.layer === 'object' && PIECES[p.piece]?.solid && p.piece !== 'pond');
+  const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 0.1));
+  let [pc, pr] = tileAt(x0, z0);
+  for (let i = 1; i <= steps; i++) {
+    const [c, r] = tileAt(x0 + ((x1 - x0) * i) / steps, z0 + ((z1 - z0) * i) / steps);
+    if (c === pc && r === pr) continue;
+    if (!inGrid(c, r) || solidAt(c, r)) return false;
+    // Across a tile edge (or a corner: both edges either way round count).
+    const crossed = c !== pc && r !== pr ? [pair(pc, pr, c, pr), pair(c, pr, c, r), pair(pc, pr, pc, r), pair(pc, r, c, r)] : [pair(pc, pr, c, r)];
+    if (crossed.some((k) => edges.has(k))) return false;
+    [pc, pr] = [c, r];
+  }
+  return true;
+}
+
+/** The pond's water: an oval in its footprint (half-widths along x and z at rot 0), as drawn. */
+export const POND_WATER = { rx: 2.25, rz: 1.7 };
+
+/** Whether a world point is on a pond's water (where a hen floats rather than walks). */
+export function inPondWater(farm: FarmState, x: number, z: number, margin = 0): boolean {
+  return farm.placements.some((p) => {
+    if (p.piece !== 'pond') return false;
+    const [cx, cz] = placementCenter(p);
+    const turned = p.rot % 2 === 1;
+    const rx = (turned ? POND_WATER.rz : POND_WATER.rx) - margin;
+    const rz = (turned ? POND_WATER.rx : POND_WATER.rz) - margin;
+    return ((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2 < 1;
   });
 }
 

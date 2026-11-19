@@ -6,10 +6,12 @@ import { CylinderCollider, RigidBody, useRapier, type RapierCollider, type Rapie
 type Physics = ReturnType<typeof useRapier>;
 import type { KinematicCharacterController } from '@dimforge/rapier3d-compat';
 import type { Group } from 'three';
-import { PLAYER_SPAWN, RIDGE, VILLAGERS, WANDER, type VillagerPlan } from '@/game/data';
+import { PLAYER_SPAWN, RIDGE, shopRoom, TAVERN_DOOR, TAVERN_SPOTS, tavernVisit, VILLAGERS, WANDER, type VillagerPlan } from '@/game/data';
 import { distToPaths, groundHeight, isOpenGround } from '@/game/engine/terrain';
 import { playerState } from '@/game/engine/world-state';
+import { getFarm, useClock } from '@/game/state/farm-store';
 import { useSession } from '@/game/state/session-store';
+import { zoneAt } from '@/game/state/zones';
 import { CharacterModel, type CharacterMotion } from './character-model';
 
 /**
@@ -26,6 +28,11 @@ import { CharacterModel, type CharacterMotion } from './character-model';
  * other pass. A stretch found blocked (by a fixed obstacle, or by being held up) is
  * avoided for a while and the way there is planned round it. Nobody heads onto the
  * north bank until its gate is up.
+ *
+ * In the evening the adults go to the tavern: each sets off at its own time between 6 and 7 PM
+ * (`tavernVisit`, random but fixed for the day), walks to the door, and is inside — standing at a
+ * spot of its own (`TAVERN_SPOTS`) — until its own time to leave, between 8:45 and 10 PM. Like friends, a
+ * villager is only seen from the same space (outdoors, or inside the tavern).
  */
 
 const BODY_Y = 0.65;
@@ -165,6 +172,11 @@ function route(from: number, to: number, blocked: (a: number, b: number) => bool
   return path;
 }
 
+/** The network point at the tavern's door. */
+const TAVERN_NODE = nearestNode(TAVERN_DOOR);
+/** Adults, in order: each takes the tavern spot of its rank. */
+const ADULTS = VILLAGERS.filter((v) => (v.scale ?? 1) >= 1).map((v) => v.id);
+
 /** Held up (moving under a quarter of its pace) this long, a villager turns back. */
 const STUCK = 0.8;
 /** A way a villager got held up on is avoided this long (seconds). */
@@ -186,13 +198,15 @@ function Villager({ plan, index }: { plan: VillagerPlan; index: number }) {
     };
   }, [world]);
   const root = useRef<Group>(null);
+  const shell = useRef<Group>(null);
   const motion = useRef<CharacterMotion>({ speed: 0 });
+  const seat = ADULTS.indexOf(plan.id);
   // Start on the network point nearest the villager's start.
   const first = nearestNode(plan.start, clearOfSpawn);
   const [x0, z0] = WANDER.nodes[first];
   // The node just left, the one being walked to, and an idle timer.
   const walk = useRef({ x: x0, z: z0, from: first, to: first, wait: 1 + index * 0.7, rot: 0, look: 0, speed: 0, stuck: 0, stroll: null as [number, number] | null, avoid: new Map<string, number>(),
-    dest: first, path: [] as number[], back: false, met: 0, lift: groundHeight(x0, z0) });
+    dest: first, path: [] as number[], back: false, met: 0, lift: groundHeight(x0, z0), inside: false });
   useEffect(
     () => () => {
       crowd.delete(plan.id);
@@ -216,10 +230,47 @@ function Villager({ plan, index }: { plan: VillagerPlan; index: number }) {
     // Everyone holds still before the game proper (title, character setup), so the town only comes
     // to life once the player has arrived.
     const onStage = session.screen !== 'play';
+    // The tavern evening: an adult's own hours there today.
+    const farm = getFarm();
+    const visit = farm && seat >= 0 ? tavernVisit(plan.id, `${farm.year}-${farm.season}-${farm.day}`) : null;
+    const minute = useClock.getState().minute;
+    const wantIn = !!visit && !onStage && minute >= visit.go && minute < visit.leave;
+    const room = shopRoom('tavern');
+    // The doorstep is clear (nobody, hero or villager, standing on it), so one can step out.
+    const doorClear = () => {
+      const [dx0, dz0] = WANDER.nodes[TAVERN_NODE];
+      if (Math.hypot(playerState.position.x - dx0, playerState.position.z - dz0) < 1.2) return false;
+      for (const [other, p] of crowd) if (other !== plan.id && Math.hypot(p.x - dx0, p.z - dz0) < 1.2) return false;
+      return true;
+    };
+    if (w.inside && !wantIn && doorClear()) {
+      // Time to go (once the doorstep is clear): back out on it, then on round the town.
+      w.inside = false;
+      [w.x, w.z] = WANDER.nodes[TAVERN_NODE];
+      w.from = w.to = TAVERN_NODE;
+      w.path = [];
+      w.stroll = null;
+      w.dest = chooseDest(plan.id, TAVERN_NODE, TAVERN_NODE);
+      w.wait = 0.6;
+      w.rot = w.look = 0;
+      w.lift = groundHeight(w.x, w.z);
+    } else if (!w.inside && wantIn && w.dest !== TAVERN_NODE) {
+      // Off to the tavern: head for its door (from the next point on the road).
+      w.dest = TAVERN_NODE;
+      claims.set(plan.id, TAVERN_NODE);
+      w.path = [];
+      w.wait = Math.min(w.wait, 0.5);
+    }
 
     let target = 0;
     let face: number | null = null;
-    if (near) {
+    if (w.inside) {
+      // At the tavern: stand at its spot, turned to the company, glancing about now and then.
+      const spot = TAVERN_SPOTS[seat % TAVERN_SPOTS.length];
+      w.x = room.cx + spot.at[0];
+      w.z = room.cz + spot.at[1];
+      face = near ? Math.atan2(px, pz) : Math.atan2(spot.look[0] - spot.at[0], spot.look[1] - spot.at[1]) + Math.sin(t * 0.4 + index) * 0.35;
+    } else if (near) {
       face = Math.atan2(px, pz);
     } else if (w.wait > 0 || onStage) {
       // Idle (and hold still during conversations, so nobody strolls through the stage).
@@ -260,6 +311,14 @@ function Villager({ plan, index }: { plan: VillagerPlan; index: number }) {
           return;
         }
         const here = w.to;
+        if (here === TAVERN_NODE && wantIn) {
+          // At the tavern's door in the evening: in they go.
+          w.inside = true;
+          w.stroll = null;
+          w.path = [];
+          claims.delete(plan.id);
+          return;
+        }
         if (here === w.dest && !w.back) {
           // There: linger, perhaps stroll onto the grass nearby, then pick the next destination.
           w.wait = plan.pause[0] + Math.random() * (plan.pause[1] - plan.pause[0]);
@@ -342,16 +401,18 @@ function Villager({ plan, index }: { plan: VillagerPlan; index: number }) {
       while (diff < -Math.PI) diff += Math.PI * 2;
       w.rot += diff * (1 - Math.exp(-dt * 6));
     }
-    // Stand on the path, bridge or stone underfoot (the physics ground is flat).
-    w.lift += (groundHeight(w.x, w.z) - w.lift) * (1 - Math.exp(-dt * 15));
+    // Stand on the path, bridge or stone underfoot (the physics ground is flat); indoors, on the floor.
+    w.lift = w.inside ? 0 : w.lift + (groundHeight(w.x, w.z) - w.lift) * (1 - Math.exp(-dt * 15));
     body.current?.setNextKinematicTranslation({ x: w.x, y: BODY_Y + w.lift, z: w.z });
     if (root.current) root.current.rotation.y = w.rot;
+    // Seen only from the same space: outdoors, or inside the tavern with them.
+    if (shell.current) shell.current.visible = zoneAt(w.x, w.z) === zoneAt(playerState.position.x, playerState.position.z);
   });
 
   return (
     <RigidBody ref={body} type="kinematicPosition" colliders={false} position={[x0, BODY_Y, z0]}>
       <CylinderCollider ref={collider} args={[BODY_Y - 0.05, 0.3 * (plan.scale ?? 1)]} position={[0, 0.05, 0]} />
-      <group position={[0, -BODY_Y, 0]}>
+      <group ref={shell} position={[0, -BODY_Y, 0]}>
         <group ref={root} name="villager">
           <CharacterModel model={plan.model} scale={plan.scale} motion={motion} />
         </group>

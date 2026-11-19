@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { kitItem, sellPrice } from './content';
-import { houseEntry, inHouseArea, shellDoors, tileAt, tileIndex, underShell } from './farm-map';
+import { animalCanWalk, CHICKEN_YARD, COOP_TILE, GRID, houseEntry, inHouseArea, ORCHARD_TREES, ROWS_ADDED_NORTH, shellDoors, tileAt, tileCenter, tileIndex, underShell } from './farm-map';
 import { applyIntent, cloneFarm, createFarm, cropStage, isRipe, migrateFarm, placementProblem, SAVE_VERSION } from './sim';
 import type { Actor, Effect, FarmState, Intent } from './types';
 
 const host: Actor = { id: 'host', name: 'Hana' };
 const guest: Actor = { id: 'guest', name: 'Gus' };
-const T = { c: 23, r: 12 }; // a starter tilled tile
+const T = { c: 23, r: 16 }; // a starter tilled tile
 
 const run = (farm: FarmState, actor: Actor, intent: Intent) => {
   const res = applyIntent(farm, actor, intent);
@@ -84,10 +84,9 @@ test('the shipping bin pays the owner overnight and empties', () => {
 test('guests help but cannot build, spend, withdraw or end the day', () => {
   const farm = createFarm('host', 'Hana');
   for (const intent of [
-    { t: 'place', piece: 'fence', c: 20, r: 12, rot: 0, color: 0 },
-    { t: 'buyParcel', parcel: 'orchard' },
+    { t: 'place', piece: 'fence', c: 20, r: 16, rot: 0, color: 0 },
     { t: 'withdraw', item: 'turnip', n: 1 },
-    { t: 'till', c: 12, r: 12 },
+    { t: 'till', c: 12, r: 16 },
     { t: 'endDay' },
   ] as Intent[]) {
     assert.equal(applyIntent(farm, guest, intent).ok, false, intent.t);
@@ -111,7 +110,7 @@ test('guests help but cannot build, spend, withdraw or end the day', () => {
 
 test('chickens fed today lay an egg overnight', () => {
   const farm = createFarm('host', 'Hana');
-  run(farm, host, { t: 'place', piece: 'coop', c: 30, r: 12, rot: 0, color: 1 });
+  run(farm, host, { t: 'place', piece: 'coop', c: 30, r: 16, rot: 0, color: 1 });
   const coop = farm.placements[farm.placements.length - 1].id;
   run(farm, host, { t: 'buyAnimal', kind: 'chicken', coop, name: 'Pip' });
   run(farm, host, { t: 'feed', coop, from: 'self' });
@@ -121,13 +120,13 @@ test('chickens fed today lay an egg overnight', () => {
   assert.equal(applyIntent(farm, host, { t: 'remove', id: coop }).ok, false, 'occupied coops stay');
 });
 
-test('villa pieces stay inside the footprint; land must be owned', () => {
+test('villa pieces stay inside the footprint; the whole farm is yours from the start', () => {
   const farm = createFarm('host', 'Hana');
-  assert.match(placementProblem(farm, 'wall', 26, 12, 0) ?? '', /inside the house/);
-  assert.match(placementProblem(farm, 'fence', 3, 5, 0) ?? '', /own/);
-  run(farm, host, { t: 'buyParcel', parcel: 'orchard' });
-  assert.equal(placementProblem(farm, 'fence', 3, 5, 0), null);
-  const fx = run(farm, host, { t: 'place', piece: 'fence', c: 3, r: 5, rot: 0, color: 7 });
+  assert.match(placementProblem(farm, 'wall', 26, 16, 0) ?? '', /inside the house/);
+  // The orchard's end, and the rows up north, are yours too.
+  assert.equal(placementProblem(farm, 'fence', 3, 9, 0), null);
+  assert.equal(placementProblem(farm, 'fence', 30, 0, 0), null);
+  const fx = run(farm, host, { t: 'place', piece: 'fence', c: 3, r: 9, rot: 0, color: 7 });
   assert.deepEqual(fx, [{ e: 'take', who: 'host', item: kitItem('fence'), n: 1 }]);
 });
 
@@ -146,8 +145,8 @@ test('a guest replica fed the same accepted intents agrees with the host', () =>
     [host, { t: 'deposit', item: 'seed-potato', n: 5 }],
     [guest, { t: 'plant', ...T, seed: 'seed-potato', from: 'storage' }],
     [guest, { t: 'water', ...T }],
-    [host, { t: 'till', c: 13, r: 13 }],
-    [guest, { t: 'till', c: 13, r: 14 }], // rejected: never reaches the replica
+    [host, { t: 'till', c: 13, r: 17 }],
+    [guest, { t: 'till', c: 13, r: 18 }], // rejected: never reaches the replica
     [host, { t: 'endDay' }],
   ];
   for (const [actor, intent] of log) {
@@ -172,9 +171,101 @@ test('the starter house follows the rules: every piece could have been placed wh
   }
 });
 
+/** A farm as a pre-v10 save had it: 16 rows (no rows up north), so everything 4 rows higher up. */
+function asPreV10(farm: FarmState): FarmState {
+  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  old.tiles = old.tiles.slice(GRID.cols * ROWS_ADDED_NORTH);
+  for (const p of old.placements) if (p.c >= 0 && p.c < GRID.cols) p.r -= ROWS_ADDED_NORTH;
+  for (const t of old.trees) t.r -= ROWS_ADDED_NORTH;
+  (old as FarmState & { parcels: string[] }).parcels = [];
+  return old;
+}
+
+test('version-9 saves grow 4 rows north, everything staying on the same ground', () => {
+  const farm = createFarm('host', 'Hana');
+  run(farm, host, { t: 'place', piece: 'coop', c: 30, r: 16, rot: 0, color: 1 });
+  const old = asPreV10(farm);
+  old.version = 9;
+  const migrated = migrateFarm(old)!;
+  assert.equal(migrated.version, SAVE_VERSION);
+  assert.equal(migrated.tiles.length, GRID.cols * GRID.rows);
+  assert.deepEqual(migrated.placements, farm.placements);
+  assert.deepEqual(migrated.trees, farm.trees);
+  assert.ok(migrated.tiles[tileIndex(T.c, T.r)].tilled, 'the tilled patch is where it was');
+  assert.equal((migrated as FarmState & { parcels?: unknown }).parcels, undefined);
+});
+
+test('version-10 saves: the house moves up north, its lantern, bin and path following the door', () => {
+  const farm = createFarm('host', 'Hana');
+  const spots = (f: FarmState) =>
+    f.placements
+      .filter((p) => p.c >= 0 && p.c < GRID.cols)
+      .map((p) => `${p.piece}@${p.c},${p.r}`)
+      .sort();
+  // As it was in v10: the house 4 rows lower, so the yard started 4 rows lower too.
+  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  old.version = 10;
+  old.placements = old.placements.filter((p) => !(p.piece === 'path' && p.r < 10));
+  for (const p of old.placements) if ((p.piece === 'lantern' || p.piece === 'shipping-bin') && p.r === 6) p.r = 10;
+  old.placements.push({ id: 999, piece: 'flower-pot', c: 17, r: 3, rot: 0, color: 1, storey: 0 });
+  const migrated = migrateFarm(old)!;
+  assert.equal(migrated.version, SAVE_VERSION);
+  assert.deepEqual(spots(migrated), spots(farm));
+  assert.equal(migrated.storage[kitItem('flower-pot')], 1, 'what stood where the house goes is put away');
+});
+
+test('the farm has a pond in its north-east corner, and older saves get one where there is room', () => {
+  const farm = createFarm('host', 'Hana');
+  const pond = farm.placements.find((p) => p.piece === 'pond')!;
+  assert.deepEqual([pond.c, pond.r], [38, 1]);
+  assert.match(placementProblem(farm, 'bench', 40, 3, 0) ?? '', /./, 'the pond is in the way');
+  assert.equal(applyIntent(farm, host, { t: 'till', c: 40, r: 3 }).ok, false, 'no tilling the pond');
+  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  old.version = 11;
+  old.placements = old.placements.filter((p) => p.piece !== 'pond');
+  const migrated = migrateFarm(old)!;
+  assert.equal(migrated.version, SAVE_VERSION);
+  assert.equal(migrated.placements.filter((p) => p.piece === 'pond').length, 1);
+});
+
+test('the pond corner is a fenced chicken yard with a gate, and the shed has its spot beside the pond', () => {
+  const farm = createFarm('host', 'Hana');
+  const fences = farm.placements.filter((p) => p.piece === 'fence');
+  const { c0, c1, r0, r1, gate } = CHICKEN_YARD;
+  assert.equal(fences.length, r1 - r0 + (c1 - c0) - 1, 'west side, and the south side but for the gate');
+  assert.ok(!fences.some((p) => p.c === gate && p.r === r1 - 1 && p.rot === 2), 'the gate is open');
+  assert.equal(placementProblem(farm, 'coop', ...COOP_TILE, 0), null, 'the shed fits beside the pond');
+  // Older saves get the fence wherever it's free.
+  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  old.version = 12;
+  old.placements = old.placements.filter((p) => p.piece !== 'fence');
+  const migrated = migrateFarm(old)!;
+  assert.equal(migrated.version, SAVE_VERSION);
+  assert.equal(migrated.placements.filter((p) => p.piece === 'fence').length, fences.length);
+});
+
+test('hens can’t walk through the yard’s fence or its gate or onto the shed, but may swim in the pond', () => {
+  const farm = createFarm('host', 'Hana');
+  const { c0, r1, gate } = CHICKEN_YARD;
+  const [ix, iz] = tileCenter(c0 + 2, 4); // inside the yard
+  assert.ok(animalCanWalk(farm, ix, iz, ...tileCenter(c0 + 3, 5)), 'about the yard');
+  assert.ok(!animalCanWalk(farm, ix, iz, ...tileCenter(c0 - 1, 4)), 'not through the west fence');
+  assert.ok(!animalCanWalk(farm, ix, iz, ...tileCenter(c0 + 4, r1)), 'not through the south fence');
+  assert.ok(animalCanWalk(farm, ix, iz, ...tileCenter(40, 2)), 'into the pond: hens swim');
+  const [gx, gz] = tileCenter(gate, r1 - 1);
+  assert.ok(animalCanWalk(farm, gx, gz, ...tileCenter(gate, r1)), 'out through the open gap…');
+  run(farm, host, { t: 'place', piece: 'coop', c: COOP_TILE[0], r: COOP_TILE[1], rot: 0, color: 1 });
+  assert.ok(!animalCanWalk(farm, ix, iz, ...tileCenter(COOP_TILE[0], COOP_TILE[1])), 'not onto the shed');
+  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  old.version = 13;
+  const migrated = migrateFarm(old)!;
+  assert.ok(migrated.placements.some((p) => p.piece === 'fence-gate' && p.c === gate && p.r === r1 - 1));
+  assert.ok(!animalCanWalk(migrated, gx, gz, ...tileCenter(gate, r1)), '…but not once the shed brings its gate');
+});
+
 test('version-1 saves get the new house; furniture that stood in the way goes to storage', () => {
   const farm = createFarm('host', 'Hana');
-  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  const old = asPreV10(farm);
   old.version = 1;
   old.placements = [{ id: 900, piece: 'flower-pot', c: 20, r: 3, rot: 0, color: 1, storey: 0 }, { id: 901, piece: 'wall', c: 15, r: 0, rot: 0, color: 0, storey: 0 }];
   old.nextId = 902;
@@ -188,7 +279,7 @@ test('version-1 saves get the new house; furniture that stood in the way goes to
 
 test('version-2 saves: the old starter furniture moves into the new house instead of piling up in storage', () => {
   const farm = createFarm('host', 'Hana');
-  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  const old = asPreV10(farm);
   old.version = 2;
   old.placements = [
     { id: 900, piece: 'sofa', c: 16, r: 4, rot: 1, color: 2, storey: 0 },
@@ -219,38 +310,74 @@ test('the house is bigger inside than out: its rooms are their own space, the fa
 
 test('the axe fells a grown tree in three chops, for wood and its seeds', () => {
   const farm = createFarm('host', 'Hana');
-  const oak = farm.trees.find((t) => t.kind === 'oak' && t.c === 11 && t.r === 2)!;
+  const oak = farm.trees.find((t) => t.kind === 'oak' && t.c === 11 && t.r === 6)!;
   assert.ok(oak, 'a wild oak stands on the home plot');
-  assert.equal(applyIntent(farm, guest, { t: 'chop', c: 11, r: 2 }).ok, false, 'guests don’t chop');
-  assert.deepEqual(run(farm, host, { t: 'chop', c: 11, r: 2 }), []);
-  run(farm, host, { t: 'chop', c: 11, r: 2 });
-  const fx = run(farm, host, { t: 'chop', c: 11, r: 2 });
+  assert.equal(applyIntent(farm, guest, { t: 'chop', c: 11, r: 6 }).ok, false, 'guests don’t chop');
+  assert.deepEqual(run(farm, host, { t: 'chop', c: 11, r: 6 }), []);
+  run(farm, host, { t: 'chop', c: 11, r: 6 });
+  const fx = run(farm, host, { t: 'chop', c: 11, r: 6 });
   assert.deepEqual(fx, [
     { e: 'give', who: 'host', item: 'wood', n: 8 },
     { e: 'give', who: 'host', item: 'acorn', n: 2 },
   ]);
   assert.ok(!farm.trees.includes(oak));
-  // Orchard trees stand on land you don't own yet.
-  assert.match((applyIntent(farm, host, { t: 'chop', c: 2, r: 3 }) as { reason: string }).reason, /own/);
+  // The orchard's old trees are on your land too.
+  assert.ok(applyIntent(farm, host, { t: 'chop', c: 2, r: 7 }).ok);
+});
+
+test('apple trees bear apples to pick, which grow back; felled, they give apple wood and apple seeds', () => {
+  const farm = createFarm('host', 'Hana');
+  const [c, r] = ORCHARD_TREES[0];
+  // Anyone may pick: the owner into their bag, a guest into storage.
+  assert.deepEqual(run(farm, host, { t: 'pick', c, r }), [{ e: 'give', who: 'host', item: 'apple', n: 3 }]);
+  assert.equal(applyIntent(farm, host, { t: 'pick', c, r }).ok, false, 'picked bare');
+  sleep(farm);
+  sleep(farm);
+  assert.equal(applyIntent(farm, guest, { t: 'pick', c, r }).ok, false, 'not back yet after 2 nights');
+  sleep(farm);
+  assert.deepEqual(run(farm, guest, { t: 'pick', c, r }), []);
+  assert.equal(farm.storage.apple, 3, 'back after 3 nights; a guest picks into storage');
+  // Felled: apple wood (not plain wood) and its seeds.
+  run(farm, host, { t: 'chop', c, r });
+  run(farm, host, { t: 'chop', c, r });
+  assert.deepEqual(run(farm, host, { t: 'chop', c, r }), [
+    { e: 'give', who: 'host', item: 'apple-wood', n: 5 },
+    { e: 'give', who: 'host', item: 'seed-apple', n: 2 },
+  ]);
+});
+
+test('DEV tools: grow everything planted at once, and ripen the fruit trees (host only)', () => {
+  const farm = createFarm('host', 'Hana');
+  run(farm, host, { t: 'plant', ...T, seed: 'seed-turnip', from: 'self' });
+  run(farm, host, { t: 'plant', c: 20, r: 14, seed: 'acorn', from: 'self' });
+  assert.equal(applyIntent(farm, guest, { t: 'devGrow' }).ok, false, 'guests cannot');
+  run(farm, host, { t: 'devGrow' });
+  assert.ok(isRipe(farm.tiles[tileIndex(T.c, T.r)].crop!));
+  assert.equal(farm.trees.find((t) => t.c === 20 && t.r === 14)!.stage, 4);
+  const [c, r] = ORCHARD_TREES[0];
+  run(farm, host, { t: 'pick', c, r });
+  assert.equal(applyIntent(farm, host, { t: 'pick', c, r }).ok, false);
+  run(farm, host, { t: 'devFruit' });
+  assert.deepEqual(run(farm, host, { t: 'pick', c, r }), [{ e: 'give', who: 'host', item: 'apple', n: 3 }]);
 });
 
 test('a planted seed grows into a tree by itself, a stage every few nights', () => {
   const farm = createFarm('host', 'Hana');
-  run(farm, host, { t: 'plant', c: 20, r: 10, seed: 'acorn', from: 'self' });
-  const tree = farm.trees.find((t) => t.c === 20 && t.r === 10)!;
+  run(farm, host, { t: 'plant', c: 20, r: 14, seed: 'acorn', from: 'self' });
+  const tree = farm.trees.find((t) => t.c === 20 && t.r === 14)!;
   assert.equal(tree.stage, 0);
-  assert.match((applyIntent(farm, host, { t: 'plant', c: 21, r: 10, seed: 'acorn', from: 'self' }) as { reason: string }).reason, /room/);
-  assert.equal(applyIntent(farm, guest, { t: 'plant', c: 20, r: 12, seed: 'acorn', from: 'storage' }).ok, false);
+  assert.match((applyIntent(farm, host, { t: 'plant', c: 21, r: 14, seed: 'acorn', from: 'self' }) as { reason: string }).reason, /room/);
+  assert.equal(applyIntent(farm, guest, { t: 'plant', c: 20, r: 16, seed: 'acorn', from: 'storage' }).ok, false);
   for (let d = 0; d < 8; d++) sleep(farm);
   assert.equal(tree.stage, 4, 'grown after 8 nights (oak: 2 per stage)');
   // A seedling just comes up whole.
-  run(farm, host, { t: 'plant', c: 20, r: 13, seed: 'pinecone', from: 'self' });
-  assert.deepEqual(run(farm, host, { t: 'chop', c: 20, r: 13 }), [{ e: 'give', who: 'host', item: 'pinecone', n: 1 }]);
+  run(farm, host, { t: 'plant', c: 20, r: 17, seed: 'pinecone', from: 'self' });
+  assert.deepEqual(run(farm, host, { t: 'chop', c: 20, r: 17 }), [{ e: 'give', who: 'host', item: 'pinecone', n: 1 }]);
 });
 
 test('version-6 saves get the farm’s trees', () => {
   const farm = createFarm('host', 'Hana');
-  const old = JSON.parse(JSON.stringify(farm)) as Omit<FarmState, 'trees'> & { trees?: unknown };
+  const old = asPreV10(farm) as Omit<FarmState, 'trees'> & { trees?: unknown };
   old.version = 6;
   delete old.trees;
   const migrated = migrateFarm(old)!;
@@ -260,7 +387,7 @@ test('version-6 saves get the farm’s trees', () => {
 
 test('version-8 saves: the house’s rooms move out to column 160', () => {
   const farm = createFarm('host', 'Hana');
-  const old = JSON.parse(JSON.stringify(farm)) as FarmState;
+  const old = asPreV10(farm);
   old.version = 8;
   for (const p of old.placements) if (p.c >= 160) p.c -= 72;
   const migrated = migrateFarm(old)!;

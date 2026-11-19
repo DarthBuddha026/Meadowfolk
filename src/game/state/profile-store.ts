@@ -17,6 +17,11 @@ export interface ProfileData {
   bag: Bag;
   /** One-time nudges already shown: 'email-after-visit', 'email-after-host'. */
   nudged: string[];
+  /**
+   * The hotbar as the player arranged it in their bag: a tool ('hoe', 'can', 'axe') or an item key per
+   * slot, null for an empty one. Unset, the hotbar fills itself (tools, then seeds).
+   */
+  hotbar?: (string | null)[];
   /** When this profile was last changed (ms), to pick the newer of the cloud and local copies. */
   savedAt: number;
 }
@@ -28,6 +33,7 @@ interface ProfileState extends ProfileData {
   addItem: (item: ItemKey, n: number) => void;
   addGold: (n: number) => void;
   markNudged: (id: string) => void;
+  setHotbar: (hotbar: (string | null)[] | undefined) => void;
   load: (data: ProfileData) => void;
   toggleMuted: () => void;
   /** New game: a fresh wallet and bag (identity kept). */
@@ -74,9 +80,10 @@ export const useProfile = create<ProfileState>()(
       markNudged: (id) => {
         if (!get().nudged.includes(id)) set({ nudged: [...get().nudged, id], savedAt: Date.now() });
       },
-      load: (data) => set({ ...data }),
+      setHotbar: (hotbar) => set({ hotbar, savedAt: Date.now() }),
+      load: (data) => set({ hotbar: undefined, ...data }),
       toggleMuted: () => set({ muted: !get().muted }),
-      resetEconomy: () => set({ gold: START_GOLD, bag: { ...STARTER_BAG }, savedAt: Date.now() }),
+      resetEconomy: () => set({ gold: START_GOLD, bag: { ...STARTER_BAG }, hotbar: undefined, savedAt: Date.now() }),
     }),
     {
       name: storageKey(),
@@ -89,8 +96,8 @@ export const useProfile = create<ProfileState>()(
 );
 
 export function profileData(): ProfileData {
-  const { playerId, name, look, gold, bag, nudged, savedAt } = useProfile.getState();
-  return { playerId, name, look, gold, bag, nudged, savedAt };
+  const { playerId, name, look, gold, bag, nudged, hotbar, savedAt } = useProfile.getState();
+  return { playerId, name, look, gold, bag, nudged, hotbar, savedAt };
 }
 
 export const hasIdentity = (s: Pick<ProfileData, 'name'>) => s.name.trim().length >= 2;

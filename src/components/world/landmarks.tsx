@@ -9,6 +9,7 @@ import { getSteppingStones, STONE } from '@/game/engine/terrain';
 import { Cottage } from './cottage';
 import { TownPlaza } from './plaza';
 import { EastSide } from './east-side';
+import { Tavern } from './tavern';
 import { getWorldMaterials } from './materials';
 import { useCanvasTexture } from './use-canvas-texture';
 
@@ -290,6 +291,7 @@ export function Landmarks() {
         <Cottage key={i} plan={h} />
       ))}
       <CarpenterHouse />
+      <Tavern />
       {SIGNPOSTS.map((s) => (
         <Signpost key={s.text} {...s} />
       ))}

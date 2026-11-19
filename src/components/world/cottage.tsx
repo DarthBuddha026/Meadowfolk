@@ -143,7 +143,7 @@ function Window({ x, y, z, rotY = 0, glass }: { x: number; y: number; z: number;
 }
 
 /** Ground-floor shopfront: two wide windows either side of the door, a striped awning and a name board. */
-function Shopfront({ w, d, baseH, name, glass }: { w: number; d: number; baseH: number; name: string; glass: MeshStandardMaterial }) {
+function Shopfront({ w, d, baseH, name, awning, board, glass }: { w: number; d: number; baseH: number; name: string; awning: string; board: boolean; glass: MeshStandardMaterial }) {
   const m = getWorldMaterials();
   const sign = useCanvasTexture(
     512,
@@ -178,10 +178,10 @@ function Shopfront({ w, d, baseH, name, glass }: { w: number; d: number; baseH: 
       {Array.from({ length: stripes }, (_, i) => (
         <mesh key={i} position={[-w / 2 + 0.15 + (i + 0.5) * ((w - 0.3) / stripes), baseH + 1.32, z + 0.38]} rotation={[0.42, 0, 0]} castShadow>
           <boxGeometry args={[(w - 0.3) / stripes, 0.05, 0.8]} />
-          <meshStandardMaterial color={i % 2 ? '#fff4dc' : '#4fae8a'} roughness={0.8} />
+          <meshStandardMaterial color={i % 2 ? '#fff4dc' : awning} roughness={0.8} />
         </mesh>
       ))}
-      <group position={[0, baseH + 1.72, z + 0.06]}>
+      <group position={[0, baseH + 1.72, z + 0.06]} visible={board}>
         <RoundedBox args={[2.6, 0.5, 0.08]} radius={0.04} material={m.woodDark} castShadow />
         <mesh position={[0, 0, 0.046]}>
           <planeGeometry args={[2.44, 0.4]} />
@@ -336,7 +336,7 @@ export function Cottage({
         );
       })}
       {plan.shop ? (
-        <Shopfront w={w} d={d} baseH={baseH} name={plan.shop} glass={mats.glass} />
+        <Shopfront w={w} d={d} baseH={baseH} name={plan.shop} awning={plan.awning ?? '#4fae8a'} board={!plan.noBoard} glass={mats.glass} />
       ) : (
         // Wall lamp
         <mesh position={[0.62, 1.45, d / 2 + 0.1]} material={m.lanternGlow}>

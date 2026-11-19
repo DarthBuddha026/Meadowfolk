@@ -13,3 +13,4 @@ __pycache__/
 relay.log
 !.env.example
 dev.log
+prod.log

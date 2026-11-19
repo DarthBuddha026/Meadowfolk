@@ -5,15 +5,17 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { MeshStandardMaterial, type Group } from 'three';
 import { PIECES } from '@/game/sim/content';
-import { placementCenter } from '@/game/sim/farm-map';
+import { animalCanWalk, inPondWater, placementCenter } from '@/game/sim/farm-map';
 import type { Animal, FarmState } from '@/game/sim/types';
 import { animalPositions } from '@/game/engine/world-state';
 import { useFarmState } from '@/game/state/farm-store';
 import { useSession } from '@/game/state/session-store';
 
 /**
- * The farm's chickens: little clay hens pottering about in front of their coop. Their wandering is
- * scenery (not part of the sim); their positions feed the "Pet" prompt. Eggs waiting to be
+ * The farm's chickens: little clay hens roaming wherever their fence lets them. Their wandering is
+ * scenery (not part of the sim), but they only head for spots they can reach without crossing a
+ * fence, gate or wall (`animalCanWalk`); now and then one goes for a swim in the pond, floating low
+ * and paddling. Their positions feed the "Pet" prompt. Eggs waiting to be
  * collected sit at the coop door.
  */
 
@@ -23,7 +25,16 @@ const BEAK = new MeshStandardMaterial({ color: '#f2b84b', roughness: 0.7 });
 const EYE = new MeshStandardMaterial({ color: '#2b2340', roughness: 0.5 });
 const EGG = new MeshStandardMaterial({ color: '#f4e3c8', roughness: 0.6 });
 
-function Hen({ animal, home }: { animal: Animal; home: [number, number] }) {
+/** How much room a hen keeps round the spot it heads for (m). */
+const ROOM = 0.3;
+/** How far a hen strolls at a time, and how far from its coop it will roam (m). */
+const STROLL: [number, number] = [1.2, 5];
+const ROAM = 10;
+/** Chance a hen near a pond heads for a swim next (other strolls end on dry land). */
+const SWIM = 0.2;
+const RIPPLE = new MeshStandardMaterial({ color: '#e8f6f8', roughness: 0.4, transparent: true, opacity: 0.55 });
+
+function Hen({ animal, home, farm }: { animal: Animal; home: [number, number]; farm: FarmState }) {
   const group = useRef<Group>(null);
   const body = useRef<Group>(null);
   const st = useRef({
@@ -34,7 +45,11 @@ function Hen({ animal, home }: { animal: Animal; home: [number, number] }) {
     wait: 0,
     rot: 0,
     peck: 0,
+    /** 0 on land … 1 afloat. */
+    swim: 0,
   });
+  const legs = useRef<Group>(null);
+  const ripple = useRef<Group>(null);
   useEffect(() => () => void animalPositions.delete(animal.id), [animal.id]);
   useFrame((state, rawDt) => {
     const dt = Math.min(rawDt, 1 / 20);
@@ -47,25 +62,59 @@ function Hen({ animal, home }: { animal: Animal; home: [number, number] }) {
       s.wait -= dt;
       s.peck += dt;
     } else if (d < 0.05) {
-      // Pick a new spot in the yard in front of the coop.
-      const a = Math.random() * Math.PI - Math.PI / 2;
-      const r = 1.3 + Math.random() * 1.6;
-      s.tx = home[0] + Math.sin(a) * r;
-      s.tz = home[1] + 1.2 + Math.cos(a) * r * 0.7;
+      // Pick a new spot anywhere it can walk to inside its fence (not too far from the coop), and
+      // now and then one on a pond close by, for a swim.
+      const ponds = farm.placements.filter((p) => p.piece === 'pond').map(placementCenter).filter(([px, pz]) => Math.hypot(px - home[0], pz - home[1]) < ROAM);
+      const swim = ponds.length > 0 && Math.random() < SWIM;
+      for (let tries = 0; tries < 16; tries++) {
+        let tx: number;
+        let tz: number;
+        if (swim) {
+          const [px, pz] = ponds[Math.floor(Math.random() * ponds.length)];
+          const a = Math.random() * Math.PI * 2;
+          tx = px + Math.cos(a) * Math.random() * 1.5;
+          tz = pz + Math.sin(a) * Math.random() * 1.1;
+        } else {
+          const a = Math.random() * Math.PI * 2;
+          const r = STROLL[0] + Math.random() * (STROLL[1] - STROLL[0]);
+          tx = s.x + Math.cos(a) * r;
+          tz = s.z + Math.sin(a) * r;
+          if (Math.hypot(tx - home[0], tz - home[1]) > ROAM || inPondWater(farm, tx, tz, -0.35)) continue;
+        }
+        // Reachable, and a hen's width of room all round it (so it never presses into a fence).
+        const roomy = [[ROOM, 0], [-ROOM, 0], [0, ROOM], [0, -ROOM]].every(([ox, oz]) => animalCanWalk(farm, tx, tz, tx + ox, tz + oz));
+        if (roomy && animalCanWalk(farm, s.x, s.z, tx, tz)) {
+          s.tx = tx;
+          s.tz = tz;
+          break;
+        }
+      }
       s.wait = 1 + Math.random() * 3;
     } else {
-      const step = Math.min(d, 0.9 * dt);
+      // Paddling is slower than walking.
+      const step = Math.min(d, (s.swim > 0.5 ? 0.55 : 0.9) * dt);
       s.x += (dx / d) * step;
       s.z += (dz / d) * step;
       s.rot = Math.atan2(dx, dz);
       moving = true;
     }
     animalPositions.set(animal.id, { x: s.x, z: s.z });
+    // Afloat: ease down into the water (legs tucked away) and bob; on land, hop along.
+    const afloat = inPondWater(farm, s.x, s.z, 0.15);
+    s.swim += ((afloat ? 1 : 0) - s.swim) * (1 - Math.exp(-dt * 6));
+    const t = state.clock.elapsedTime;
     const g = group.current;
     if (!g) return;
-    g.position.set(s.x, moving ? Math.abs(Math.sin(state.clock.elapsedTime * 14)) * 0.03 : 0, s.z);
+    const hop = moving && s.swim < 0.5 ? Math.abs(Math.sin(t * 14)) * 0.03 : 0;
+    const bob = Math.sin(t * 2.4 + animal.id) * 0.012;
+    g.position.set(s.x, hop * (1 - s.swim) + (bob - 0.13) * s.swim, s.z);
     g.rotation.y = s.rot;
-    if (body.current) body.current.rotation.x = !moving && s.wait > 0 ? Math.max(0, Math.sin(s.peck * 6)) * 0.5 : 0;
+    if (legs.current) legs.current.visible = s.swim < 0.5;
+    if (ripple.current) {
+      ripple.current.visible = s.swim > 0.5;
+      ripple.current.scale.setScalar(1 + Math.sin(t * 3 + animal.id) * 0.08);
+    }
+    if (body.current) body.current.rotation.x = !moving && s.wait > 0 && s.swim < 0.5 ? Math.max(0, Math.sin(s.peck * 6)) * 0.5 : 0;
   });
   const showTag = useSession((x) => x.nearby?.id === 'animal:' + animal.id);
   return (
@@ -97,11 +146,19 @@ function Hen({ animal, home }: { animal: Animal; home: [number, number] }) {
           ))}
         </group>
       </group>
-      {[-1, 1].map((s) => (
-        <mesh key={s} position={[s * 0.05, 0.06, 0]} material={BEAK}>
-          <cylinderGeometry args={[0.012, 0.012, 0.12, 5]} />
+      <group ref={legs}>
+        {[-1, 1].map((s) => (
+          <mesh key={s} position={[s * 0.05, 0.06, 0]} material={BEAK}>
+            <cylinderGeometry args={[0.012, 0.012, 0.12, 5]} />
+          </mesh>
+        ))}
+      </group>
+      {/* A ring of ripples round a swimming hen, at the water's surface. */}
+      <group ref={ripple} position={[0, 0.172, 0]} visible={false}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} material={RIPPLE}>
+          <ringGeometry args={[0.2, 0.25, 24]} />
         </mesh>
-      ))}
+      </group>
       {showTag && (
         <Html position={[0, 0.7, 0]} center distanceFactor={9} zIndexRange={[5, 0]} style={{ pointerEvents: 'none' }}>
           <div className="name-tag">
@@ -138,7 +195,7 @@ export function Animals() {
     <>
       {farm.animals.map((a) => {
         const coop = farm.placements.find((p) => p.id === a.home && PIECES[p.piece].use === 'coop');
-        return coop ? <Hen key={a.id} animal={a} home={placementCenter(coop)} /> : null;
+        return coop ? <Hen key={a.id} animal={a} home={placementCenter(coop)} farm={farm} /> : null;
       })}
       <Eggs farm={farm} />
     </>

@@ -28,14 +28,14 @@ export function Hotbar() {
       {slots.map((s, i) => (
         <button
           key={s.key}
-          title={`${s.label}${s.from === 'storage' ? ' (from storage)' : ''}`}
+          title={s.kind === 'empty' ? 'Empty: choose what goes here in your bag (I)' : `${s.label}${s.from === 'storage' ? ' (from storage)' : ''}${s.disabled ? ' (owner only)' : ''}`}
           onClick={() => {
             setSlot(i);
             playSound('blip');
           }}
-          className={`paper relative flex h-14 w-14 flex-col items-center justify-center transition ${i === active ? '-translate-y-1 bg-sun' : ''}`}
+          className={`paper relative flex h-14 w-14 flex-col items-center justify-center transition ${i === active ? '-translate-y-1 bg-sun' : ''} ${s.kind === 'empty' ? 'opacity-60' : ''}`}
         >
-          <span className="text-2xl leading-none" aria-hidden>
+          <span className={`text-2xl leading-none ${s.disabled || s.count === 0 ? 'opacity-35 grayscale' : ''}`} aria-hidden>
             {s.icon}
           </span>
           <span className="absolute left-1 top-0.5 font-display text-[10px] font-bold text-ink-soft">{i + 1}</span>

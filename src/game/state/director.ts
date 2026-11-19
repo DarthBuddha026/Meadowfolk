@@ -1,7 +1,7 @@
-import { ANIMALS, CROPS, DAY_MINUTES, DAY_REAL_SECONDS, ITEMS, PARCELS, PIECES, SHOPS, TREE_GROWN, TREE_HITS, TREE_STAGES, TREES, kitItem, itemName, parseItem, villaTier, VILLA_TIERS } from '@/game/sim/content';
-import { houseEntry, houseExit, inGrid, nearestEdge, placementCenter, placementsAt as placementsAtTile, shellDoors, tileAt, tileCenter, villaDoors, WAKE_TILE, type HouseSide } from '@/game/sim/farm-map';
-import { animalsIn, applyIntent, cloneFarm, createFarm, cropStage, isHost, isRipe, tile, treeAt } from '@/game/sim/sim';
-import type { Actor, Bag, Effect, FarmState, HelpStats, Intent, Placement, Source } from '@/game/sim/types';
+import { ANIMALS, CROPS, DAY_MINUTES, DAY_REAL_SECONDS, ITEMS, PIECES, SHOPS, TREE_GROWN, TREE_HITS, TREE_STAGES, TREES, kitItem, itemName, parseItem, villaTier, VILLA_TIERS } from '@/game/sim/content';
+import { CHICKEN_YARD, COOP_TILE, houseEntry, houseExit, inGrid, nearestEdge, placementCenter, placementsAt as placementsAtTile, shellDoors, tileAt, tileCenter, villaDoors, WAKE_TILE, type HouseSide } from '@/game/sim/farm-map';
+import { animalsIn, applyIntent, cloneFarm, createFarm, cropStage, fruitOn, isHost, isRipe, placementProblem, tile, treeAt } from '@/game/sim/sim';
+import type { Actor, Bag, Effect, FarmState, HelpStats, Intent, Placement, Source, Tree } from '@/game/sim/types';
 import { getLook } from '@/game/data/looks';
 import { SHOP_SPOTS, shopRoom } from '@/game/data/world-layout';
 import { playSound } from '@/game/engine/sound';
@@ -10,7 +10,7 @@ import { animalPositions, playerState, requestTeleport } from '@/game/engine/wor
 import * as net from '@/game/net/coop';
 import * as cloud from './cloud';
 import { clockText, getFarm, useClock, useFarm } from './farm-store';
-import { DEV_GOLD, isDevName, ownsItem, profileData, useProfile } from './profile-store';
+import { DEV_GOLD, hasIdentity, isDevName, ownsItem, profileData, useProfile } from './profile-store';
 import { useSession, type Nearby, type NetPlayer } from './session-store';
 import { zoneAt } from './zones';
 
@@ -91,32 +91,90 @@ function reject(reason: string) {
 
 export interface Slot {
   key: string;
-  kind: 'hoe' | 'can' | 'axe' | 'item';
+  kind: 'hoe' | 'can' | 'axe' | 'item' | 'empty';
   label: string;
   icon: string;
   item?: string;
   from?: Source;
   count?: number;
+  /** In the layout but not usable here (the hoe and axe on a friend's farm). */
+  disabled?: boolean;
 }
 
-/** Tools first, then seeds and fertilizer: from your own bag on your farm, from storage when visiting. */
-export function hotbar(farm: FarmState | null, bag: Bag): Slot[] {
-  const host = !!farm && farm.owner === profile().playerId;
-  const slots: Slot[] = [];
-  if (host) slots.push({ key: 'hoe', kind: 'hoe', label: 'Hoe', icon: '⛏️' });
-  slots.push({ key: 'can', kind: 'can', label: 'Watering Can', icon: '🚿' });
-  if (host) slots.push({ key: 'axe', kind: 'axe', label: 'Axe', icon: '🪓' });
+/** How many slots the hotbar has (keys 1–9). */
+export const HOTBAR_SIZE = 9;
+
+/** The tools a hotbar slot can hold. Only the farm's owner tills and chops. */
+export const TOOLS: Record<'hoe' | 'can' | 'axe', { label: string; icon: string; ownerOnly: boolean }> = {
+  hoe: { label: 'Hoe', icon: '⛏️', ownerOnly: true },
+  can: { label: 'Watering Can', icon: '🚿', ownerOnly: false },
+  axe: { label: 'Axe', icon: '🪓', ownerOnly: true },
+};
+const isTool = (key: string): key is keyof typeof TOOLS => key in TOOLS;
+
+/** Whether a tool or item can go in the hotbar: the tools, seeds (crops and trees) and fertilizer. */
+export function hotbarUsable(key: string) {
+  if (isTool(key)) return true;
+  const { id } = parseItem(key);
+  return ITEMS[id]?.kind === 'seed' || id === 'fertilizer';
+}
+
+const amOwner = (farm: FarmState | null) => !!farm && farm.owner === profile().playerId;
+
+/** The hotbar filling itself: tools first, then seeds and fertilizer (from your bag, or storage when visiting). */
+function autoHotbar(farm: FarmState | null, bag: Bag): string[] {
+  const host = amOwner(farm);
+  const keys: string[] = host ? ['hoe', 'can', 'axe'] : ['can'];
   const source: Bag = host ? bag : (farm?.storage ?? {});
-  const usable = Object.entries(source)
-    .filter(([k]) => {
-      const kind = ITEMS[parseItem(k).id]?.kind;
-      return kind === 'seed' || parseItem(k).id === 'fertilizer';
-    })
-    .sort(([a], [b]) => a.localeCompare(b));
-  for (const [item, count] of usable.slice(0, 9 - slots.length)) {
-    slots.push({ key: item, kind: 'item', label: itemName(item), icon: ITEMS[parseItem(item).id]?.icon ?? '📦', item, from: host ? 'self' : 'storage', count });
-  }
-  return slots;
+  const usable = Object.keys(source)
+    .filter((k) => (source[k] ?? 0) > 0 && hotbarUsable(k))
+    .sort((a, b) => a.localeCompare(b));
+  return [...keys, ...usable].slice(0, HOTBAR_SIZE);
+}
+
+/** What each hotbar slot holds: the layout the player chose in their bag, else the automatic one. */
+export function hotbarKeys(farm: FarmState | null, bag: Bag): (string | null)[] {
+  const chosen = profile().hotbar;
+  if (chosen) return Array.from({ length: HOTBAR_SIZE }, (_, i) => chosen[i] ?? null);
+  return autoHotbar(farm, bag);
+}
+
+/** The hotbar's slots: from your own bag on your farm, from storage when visiting. */
+export function hotbar(farm: FarmState | null, bag: Bag): Slot[] {
+  const host = amOwner(farm);
+  const source: Bag = host ? bag : (farm?.storage ?? {});
+  return hotbarKeys(farm, bag).map((key, i): Slot => {
+    if (!key) return { key: `empty-${i}`, kind: 'empty', label: 'Empty', icon: '' };
+    if (isTool(key)) {
+      const t = TOOLS[key];
+      return { key, kind: key, label: t.label, icon: t.icon, disabled: t.ownerOnly && !host };
+    }
+    return { key, kind: 'item', label: itemName(key), icon: ITEMS[parseItem(key).id]?.icon ?? '📦', item: key, from: host ? 'self' : 'storage', count: source[key] ?? 0 };
+  });
+}
+
+/** Put a tool or item in a hotbar slot (null empties it). Already in another slot, the two swap. */
+export function setHotbarSlot(index: number, key: string | null) {
+  if (key && !hotbarUsable(key)) return;
+  const keys = hotbarKeys(getFarm(), profile().bag);
+  const layout = Array.from({ length: HOTBAR_SIZE }, (_, i) => keys[i] ?? null);
+  const from = key ? layout.indexOf(key) : -1;
+  if (from >= 0 && from !== index) layout[from] = layout[index];
+  layout[index] = key;
+  useProfile.getState().setHotbar(layout);
+}
+
+/** Swap two hotbar slots. */
+export function swapHotbarSlots(a: number, b: number) {
+  const keys = hotbarKeys(getFarm(), profile().bag);
+  const layout = Array.from({ length: HOTBAR_SIZE }, (_, i) => keys[i] ?? null);
+  [layout[a], layout[b]] = [layout[b], layout[a]];
+  useProfile.getState().setHotbar(layout);
+}
+
+/** Back to the hotbar filling itself. */
+export function resetHotbar() {
+  useProfile.getState().setHotbar(undefined);
 }
 
 /** The farm tile the hero is facing, if on the grid. */
@@ -146,7 +204,14 @@ export function applyTool() {
   }
   const slots = hotbar(farm, profile().bag);
   const slot = slots[Math.min(s.slot, slots.length - 1)];
-  if (!slot) return;
+  // Fruit on a tree is picked with anything but the axe in your hand (the axe chops).
+  const fruitTree = treeAt(farm, c, r);
+  if (fruitTree && fruitOn(fruitTree) && slot?.kind !== 'axe') return pickFruit(fruitTree);
+  if (!slot || slot.kind === 'empty') {
+    toast('Nothing in that slot. Choose what goes in your hotbar in your bag (I).');
+    return;
+  }
+  if (slot.disabled) return reject(`Only the farm's owner uses the ${slot.label.toLowerCase()} here`);
   if (slot.kind === 'hoe') {
     if (t?.crop) {
       if (submit({ t: 'clear', c, r })) playSound('step');
@@ -181,6 +246,17 @@ export function applyTool() {
   }
 }
 
+/** Pick a fruit tree bare (into your bag, or the host's storage when visiting). */
+function pickFruit(tree: Tree) {
+  const fruit = TREES[tree.kind].fruit!;
+  const n = fruitOn(tree);
+  if (!submit({ t: 'pick', c: tree.c, r: tree.r })) return;
+  playSound('clue');
+  toast(`You picked ${n} ${itemName(fruit.item).toLowerCase()}${n === 1 ? '' : 's'}${amOwnerHere() ? '' : ' (into storage)'}. More in ${fruit.nights} nights.`);
+}
+
+const amOwnerHere = () => getFarm()?.owner === profile().playerId;
+
 /* ------------------------------------------------------------------ */
 /* Interacting                                                         */
 /* ------------------------------------------------------------------ */
@@ -193,7 +269,7 @@ const shopOpen = (shop: string, minute = useClock.getState().minute) => {
 const hoursText = (shop: string) => {
   const d = SHOPS[shop];
   const h = (m: number) => {
-    const hr = 6 + m / 60;
+    const hr = (6 + m / 60) % 24;
     return `${hr % 12 || 12} ${hr < 12 ? 'AM' : 'PM'}`;
   };
   return `${h(d.open)}–${h(d.close)}`;
@@ -214,12 +290,20 @@ function interactPoints(farm: FarmState | null): Point[] {
     const { name, keeper } = SHOPS[shop];
     return [
       { id: 'shopdoor:' + shop, x: spot.counter[0], z: spot.counter[1], r: 1.9, label: () => (shopOpen(shop) ? `Go into the ${name}` : `${name} — closed (${hoursText(shop)})`) },
-      { id: 'shop:' + shop, x: room.shopAt[0], z: room.shopAt[1], r: 1.7, label: () => (shopOpen(shop) ? `Shop with ${keeper}` : `${keeper} is closing up`) },
+      { id: 'shop:' + shop, x: room.shopAt[0], z: room.shopAt[1], r: 1.7, label: () => (shopOpen(shop) ? `${SHOPS[shop].chat ? 'Chat' : 'Shop'} with ${keeper}` : `${keeper} is closing up`) },
       { id: 'shopout:' + shop, x: room.exit[0], z: room.exit[1], r: 1.3, label: () => 'Go outside' },
     ];
   });
   if (!farm) return pts;
   const host = farm.owner === profile().playerId;
+  // Fruit trees with fruit on: pick it.
+  for (const tree of farm.trees ?? []) {
+    const n = fruitOn(tree);
+    if (!n) continue;
+    const [x, z] = tileCenter(tree.c, tree.r);
+    const item = TREES[tree.kind].fruit!.item;
+    pts.push({ id: 'tree:' + tree.id, x, z, r: 1.5, label: () => `Pick ${itemName(item).toLowerCase()}s (${n})` });
+  }
   for (const p of farm.placements) {
     const def = PIECES[p.piece];
     if (!def?.use) continue;
@@ -295,11 +379,17 @@ export function interact(id: string) {
       reject(`${SHOPS[shop].keeper} has closed for the day. Come back at ${hoursText(shop).split('–')[0]}!`);
       return;
     }
+    if (SHOPS[shop].chat) return chatWith(shop);
     playSound('open');
     s.openPanel('shop', shop);
     return;
   }
   if (!farm) return;
+  if (id.startsWith('tree:')) {
+    const tree = (farm.trees ?? []).find((t) => t.id === Number(id.slice(5)));
+    if (tree) pickFruit(tree);
+    return;
+  }
   if (id.startsWith('animal:')) {
     const a = farm.animals.find((x) => x.id === Number(id.slice(7)));
     if (a && submit({ t: 'pet', animal: a.id })) {
@@ -331,16 +421,32 @@ export function buy(item: string, n: number) {
   profile().addGold(-cost);
   profile().addItem(item, n);
   playSound('gem');
+  if (item === kitItem('coop')) buildCoopByPond();
 }
 
-export function buyParcel(id: string) {
-  const parcel = PARCELS.find((p) => p.id === id);
-  if (!parcel) return;
-  if (profile().gold < parcel.price) return reject('Not enough gold');
-  if (submit({ t: 'buyParcel', parcel: id })) {
-    playSound('unlock');
-    toast(`${parcel.name} is yours! The fence comes down tonight… well, right now, actually.`);
+/**
+ * A chicken shed bought at the Carpenter's: Bram builds it on your farm straight away, beside the
+ * pond in the chicken yard, if that spot is free (and it's your farm); otherwise it waits in your
+ * bag to place in build mode.
+ */
+function buildCoopByPond() {
+  const farm = getFarm();
+  if (!farm || !amOwnerHere()) return;
+  const [c, r] = COOP_TILE;
+  if (placementProblem(farm, 'coop', c, r, 0)) {
+    toast('Your chicken shed is in your bag: place it in build mode (B).');
+    return;
   }
+  if (!submit({ t: 'place', piece: 'coop', c, r, rot: 0, color: PIECES.coop.color })) return;
+  // And a gate in the yard's gap (on the house), so the hens stay in and you can still get through.
+  const { gate, r1 } = CHICKEN_YARD;
+  const latest = getFarm();
+  if (latest && !placementProblem(latest, 'fence-gate', gate, r1 - 1, 2)) {
+    profile().addItem(kitItem('fence-gate'), 1);
+    submit({ t: 'place', piece: 'fence-gate', c: gate, r: r1 - 1, rot: 2, color: PIECES['fence-gate'].color });
+  }
+  playSound('unlock');
+  toast('Bram built your chicken shed by the pond, and hung a gate in the yard. Buy hens at the General Store.');
 }
 
 export function buyTier() {
@@ -407,6 +513,24 @@ export function devSetTime(minute: number) {
 }
 
 /** DEV: freeze or unfreeze the day clock. */
+/** DEV: ripen every crop and grow every planted tree, now. */
+export function devGrowAll() {
+  if (!isDevName() || role() !== 'host') return;
+  if (submit({ t: 'devGrow' })) {
+    playSound('success');
+    toast('Everything planted is grown');
+  }
+}
+
+/** DEV: every grown fruit tree ready to pick. */
+export function devRipenFruit() {
+  if (!isDevName() || role() !== 'host') return;
+  if (submit({ t: 'devFruit' })) {
+    playSound('success');
+    toast('Fruit trees are ready to pick');
+  }
+}
+
 export function devToggleFreeze() {
   if (!isDevName() || role() !== 'host') return;
   const frozen = !session().frozen;
@@ -580,6 +704,28 @@ export async function saveAll() {
   const tasks: Promise<void>[] = [cloud.saveProfile(profileData())];
   if (farm && role() === 'host' && farm.owner === profile().playerId) tasks.push(cloud.saveFarm(farm));
   await Promise.all(tasks);
+}
+
+/**
+ * The farm behind the title screen, so the north bank isn't bare before you play: your saved farm
+ * if you have one, else a fresh starter farm. It is only scenery — nothing runs or saves off the
+ * play screen — and Continue, New Game or joining a friend replace it with the real one. The
+ * title's time of day is kept.
+ */
+export async function showTitleFarm() {
+  if (getFarm()) return;
+  const p = profile();
+  const saved = hasIdentity(p) ? await cloud.loadFarm(p.playerId) : null;
+  // Already entering a game while the save loaded: that farm wins.
+  if (getFarm() || session().screen !== 'title') return;
+  let farm = saved;
+  if (!farm) {
+    farm = createFarm(p.playerId || 'title', 'Farmer');
+    farm.name = 'Meadowfolk';
+  }
+  const minute = useClock.getState().minute;
+  useFarm.getState().setFarm(farm, 'host');
+  useClock.getState().setMinute(minute);
 }
 
 /** Load (or start) your own farm and stand at its door. */
@@ -768,7 +914,14 @@ export function cropLabel(farm: FarmState, c: number, r: number): string | null 
   const tree = treeAt(farm, c, r);
   if (tree) {
     const def = TREES[tree.kind];
-    if (tree.stage >= TREE_GROWN) return `${def.name}${tree.hits ? ` · ${TREE_HITS[tree.stage] - tree.hits} chops left` : ''}`;
+    if (tree.stage >= TREE_GROWN) {
+      const chops = tree.hits ? ` · ${TREE_HITS[tree.stage] - tree.hits} chops left` : '';
+      if (!def.fruit) return `${def.name}${chops}`;
+      const n = fruitOn(tree);
+      const nights = def.fruit.nights - (tree.fruitNights ?? 0);
+      const fruit = n ? ` · ${n} ${itemName(def.fruit.item).toLowerCase()}${n === 1 ? '' : 's'} to pick` : ` · fruit in ${nights} night${nights === 1 ? '' : 's'}`;
+      return `${def.name}${fruit}${chops}`;
+    }
     const nights = def.nightsPerStage - tree.growth;
     return `${def.name} · ${TREE_STAGES[tree.stage]} · grows in ${nights} night${nights === 1 ? '' : 's'}`;
   }
@@ -887,6 +1040,16 @@ const DOOR_FADE_MS = 340;
  * destination's name, the hero moves to the other side, and the camera switches between the
  * outdoor follow and the indoor room view.
  */
+/** Each chat at the tavern's counter: the keeper's greeting, then the season's news, in turn. */
+let chats = 0;
+function chatWith(shop: string) {
+  const def = SHOPS[shop];
+  const season = getFarm()?.season;
+  const line = chats++ % 2 === 0 || !season ? def.greeting : def.seasonal[season];
+  playSound('blip');
+  toast(`${def.keeper}: “${line}”`);
+}
+
 /**
  * In or out of a shop: like the house, its inside is its own room off the map, behind the same
  * fade card. Closed shops stay locked (except for DEV).

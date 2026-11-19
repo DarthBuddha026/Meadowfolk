@@ -4,7 +4,8 @@ import { memo, useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { CylinderCollider, RigidBody } from '@react-three/rapier';
 import { ConeGeometry, CylinderGeometry, MeshStandardMaterial, SphereGeometry, type BufferGeometry, type Group } from 'three';
-import { TREE_GROWN } from '@/game/sim/content';
+import { TREE_GROWN, TREES } from '@/game/sim/content';
+import { fruitOn } from '@/game/sim/sim';
 import { tileCenter } from '@/game/sim/farm-map';
 import type { Tree } from '@/game/sim/types';
 import { useFarm, useFarmState } from '@/game/state/farm-store';
@@ -43,7 +44,8 @@ const APPLE = new MeshStandardMaterial({ color: '#e0473a', roughness: 0.45 });
 /** How big each stage stands (a grown tree is the size of the orchard's old ones). */
 const SCALE = [0, 0, 0.3, 0.5, 0.68];
 
-const TreeModel = memo(function TreeModel({ kind, stage }: { kind: string; stage: number }) {
+/** `apples`: how many of the five apple spots show (an apple tree's fruit still to pick). */
+const TreeModel = memo(function TreeModel({ kind, stage, apples = 0 }: { kind: string; stage: number; apples?: number }) {
   const g = geos();
   const m = getWorldMaterials();
   const leaf = LEAVES[kind] ?? LEAVES.oak;
@@ -87,16 +89,26 @@ const TreeModel = memo(function TreeModel({ kind, stage }: { kind: string; stage
       <mesh geometry={g.canopy} material={leaf} castShadow receiveShadow scale={kind === 'oak' ? [1.1, 1, 1.1] : 1} />
       {kind === 'apple' &&
         stage >= TREE_GROWN &&
+        apples > 0 &&
         [
           [0.75, 1.5, 0.55],
           [-0.6, 1.9, 0.72],
           [0.2, 2.5, 0.62],
           [-0.72, 1.4, -0.5],
           [0.5, 2.1, -0.66],
-        ].map(([x, y, z], i) => <mesh key={i} geometry={g.apple} material={APPLE} position={[x, y - 0.16, z]} scale={1.3} />)}
+        ]
+          .slice(0, apples)
+          .map(([x, y, z], i) => <mesh key={i} geometry={g.apple} material={APPLE} position={[x, y - 0.16, z]} scale={1.3} />)}
     </group>
   );
 });
+
+/** Apples showing on a tree: all five spots for a full crop, fewer as it's picked. */
+function applesShown(tree: Tree) {
+  const fruit = TREES[tree.kind]?.fruit;
+  const n = fruitOn(tree);
+  return fruit && n ? Math.max(1, Math.round((5 * n) / fruit.n)) : 0;
+}
 
 /** One tree: it wobbles when the axe bites (its chops counted up). */
 function FarmTree({ tree }: { tree: Tree }) {
@@ -117,7 +129,7 @@ function FarmTree({ tree }: { tree: Tree }) {
   return (
     <group position={[x, 0, z]} rotation={[0, (tree.id * 1.7) % (Math.PI * 2), 0]}>
       <group ref={group}>
-        <TreeModel kind={tree.kind} stage={tree.stage} />
+        <TreeModel kind={tree.kind} stage={tree.stage} apples={applesShown(tree)} />
       </group>
     </group>
   );

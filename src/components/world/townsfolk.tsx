@@ -4,11 +4,11 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import type { Group } from 'three';
-import { getLook, SHOP_SPOTS, shopRoom } from '@/game/data';
+import { getLook, SHOP_SPOTS, shopRoom, TAVERN_PATRONS, TAVERN_SPOTS, tavernVisit } from '@/game/data';
 import { SHOPS } from '@/game/sim/content';
 import { groundHeight } from '@/game/engine/terrain';
 import { remotePositions } from '@/game/net/coop';
-import { useClock } from '@/game/state/farm-store';
+import { useClock, useFarm } from '@/game/state/farm-store';
 import { playerState } from '@/game/engine/world-state';
 import { zoneAt } from '@/game/state/zones';
 import { useProfile } from '@/game/state/profile-store';
@@ -39,6 +39,42 @@ export function Shopkeepers() {
             inConversation={false}
             showTag={screen === 'play'}
             fallbackFace={face}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * Rosa and Bram's evening: after closing up they spend their own hours at the tavern's bar
+ * (`tavernVisit`), alongside the villagers who walk there. Drawn only while they're in.
+ */
+export function TavernPatrons() {
+  const minute = useClock((s) => Math.floor(s.minute / 5) * 5);
+  const screen = useSession((s) => s.screen);
+  const farm = useFarm((s) => s.farm);
+  if (!farm || screen !== 'play') return null;
+  const day = `${farm.year}-${farm.season}-${farm.day}`;
+  const room = shopRoom('tavern');
+  return (
+    <>
+      {TAVERN_PATRONS.map((p) => {
+        const v = tavernVisit(p.id, day);
+        if (minute < v.go || minute >= v.leave) return null;
+        const spot = TAVERN_SPOTS[p.spot];
+        const at: [number, number, number] = [room.cx + spot.at[0], 0, room.cz + spot.at[1]];
+        return (
+          <Npc
+            key={p.id}
+            name={p.name}
+            look={{ height: 1.4, model: p.model }}
+            target={at}
+            faceTarget={null}
+            speaking={false}
+            inConversation={false}
+            showTag
+            fallbackFace={[room.cx + spot.look[0], 0, room.cz + spot.look[1]]}
           />
         );
       })}

@@ -6,14 +6,14 @@ import { CuboidCollider, RigidBody } from '@react-three/rapier';
 import { RoundedBox } from '@react-three/drei';
 import { Color, CylinderGeometry, IcosahedronGeometry, InstancedMesh, MeshStandardMaterial, Object3D, type Mesh } from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { CROPS, PARCELS } from '@/game/sim/content';
+import { FARM_FRONT } from '@/game/data';
+import { CROPS } from '@/game/sim/content';
 import { GRID, tileCenter } from '@/game/sim/farm-map';
 import { cropStage, isRipe } from '@/game/sim/sim';
 import type { FarmState } from '@/game/sim/types';
 import { useFarm, useFarmState } from '@/game/state/farm-store';
 import { useSession } from '@/game/state/session-store';
 import { getWorldMaterials } from './materials';
-import { useCanvasTexture } from './use-canvas-texture';
 
 /**
  * The farm grid's soil and crops, drawn from the sim's state: tilled soil (darker when watered),
@@ -142,56 +142,71 @@ function Crops({ farm, rev }: { farm: FarmState; rev: number }) {
   );
 }
 
-/** A post-and-rail fence down a parcel's edge, with a "for sale" sign, until it is bought. */
-function ParcelFence({ x, sign }: { x: number; sign: string }) {
+/**
+ * The fence round the whole farm, just outside the grid, with its gate in the front
+ * where the road from the bridge arrives: wooden posts and two rails, taller gate
+ * posts and a beam over the way in.
+ */
+function FarmFence() {
   const m = getWorldMaterials();
-  const z0 = GRID.z0;
-  const len = GRID.rows * GRID.cell;
-  const posts = Math.round(len / 1.6) + 1;
-  const tex = useCanvasTexture(
-    256,
-    128,
-    (ctx, w, h) => {
-      ctx.fillStyle = '#e9d2a6';
-      ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = '#5a3a22';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = 'bold 34px Arial, sans-serif';
-      ctx.fillText('FOR SALE', w / 2, h * 0.36, w - 20);
-      ctx.font = 'bold 24px Arial, sans-serif';
-      ctx.fillText(sign, w / 2, h * 0.72, w - 20);
-    },
-    'sale-' + sign
-  );
+  const pad = 0.14;
+  const x0 = GRID.x0 - pad;
+  const x1 = GRID.x0 + GRID.cols * GRID.cell + pad;
+  const z0 = GRID.z0 - pad;
+  const z1 = GRID.z0 + GRID.rows * GRID.cell + pad;
+  const { x: gx, half } = FARM_FRONT.gate;
+  // Each run: [from x, from z, to x, to z].
+  const runs: [number, number, number, number][] = [
+    [x0, z0, x1, z0],
+    [x0, z0, x0, z1],
+    [x1, z0, x1, z1],
+    [x0, z1, gx - half, z1],
+    [gx + half, z1, x1, z1],
+  ];
   return (
-    <RigidBody type="fixed" colliders={false} position={[x, 0, z0 + len / 2]}>
-      <CuboidCollider args={[0.08, 0.6, len / 2]} position={[0, 0.6, 0]} />
-      {Array.from({ length: posts }, (_, i) => (
-        <mesh key={i} position={[0, 0.38, -len / 2 + (i * len) / (posts - 1)]} material={m.wood} castShadow>
-          <boxGeometry args={[0.12, 0.76, 0.12]} />
-        </mesh>
+    <RigidBody type="fixed" colliders={false}>
+      {runs.map(([ax, az, bx, bz], i) => {
+        const len = Math.hypot(bx - ax, bz - az);
+        const along = Math.abs(bz - az) > 0.01;
+        const posts = Math.max(1, Math.round(len / 1.6));
+        return (
+          <group key={i}>
+            <CuboidCollider args={along ? [0.08, 0.6, len / 2] : [len / 2, 0.6, 0.08]} position={[(ax + bx) / 2, 0.6, (az + bz) / 2]} />
+            {Array.from({ length: posts + 1 }, (_, k) => (
+              <mesh key={k} position={[ax + ((bx - ax) * k) / posts, 0.38, az + ((bz - az) * k) / posts]} material={m.wood} castShadow>
+                <boxGeometry args={[0.12, 0.76, 0.12]} />
+              </mesh>
+            ))}
+            {[0.28, 0.58].map((y) => (
+              <mesh key={y} position={[(ax + bx) / 2, y, (az + bz) / 2]} material={m.wood} castShadow>
+                <boxGeometry args={along ? [0.05, 0.08, len] : [len, 0.08, 0.05]} />
+              </mesh>
+            ))}
+          </group>
+        );
+      })}
+      {/* The gate: two tall posts and a beam over the way in. */}
+      {[-1, 1].map((s) => (
+        <group key={s}>
+          <CuboidCollider args={[0.1, 0.9, 0.1]} position={[gx + s * half, 0.9, z1]} />
+          <mesh position={[gx + s * half, 0.9, z1]} material={m.woodDark} castShadow>
+            <boxGeometry args={[0.18, 1.8, 0.18]} />
+          </mesh>
+        </group>
       ))}
-      {[0.28, 0.58].map((y) => (
-        <mesh key={y} position={[0, y, 0]} material={m.wood} castShadow>
-          <boxGeometry args={[0.05, 0.08, len]} />
-        </mesh>
-      ))}
-      <group position={[0.2, 0, len / 2 - 1.6]}>
-        <mesh position={[0, 0.55, 0]} material={m.woodDark}>
-          <cylinderGeometry args={[0.05, 0.06, 1.1, 8]} />
-        </mesh>
-        <RoundedBox args={[0.9, 0.48, 0.06]} radius={0.03} position={[0, 0.95, 0.05]} material={m.wood} castShadow />
-        <mesh position={[0, 0.95, 0.085]}>
-          <planeGeometry args={[0.82, 0.41]} />
-          <meshStandardMaterial map={tex} roughness={0.8} />
-        </mesh>
-      </group>
+      <RoundedBox args={[half * 2 + 0.5, 0.18, 0.22]} radius={0.04} position={[gx, 1.8, z1]} material={m.woodDark} castShadow />
     </RigidBody>
   );
 }
 
-/** A soft outline on the tile the hero is facing. */
+
+/**
+ * A soft outline on the tile the hero is facing, on the tile's own edges (a square ring whose corners
+ * sit on the tile's corners). It breathes inward only, so it never spills onto the next tile.
+ */
+/** How thick the cursor's outline is (m). */
+const CURSOR_LINE = 0.06;
+
 function Cursor() {
   const ref = useRef<Mesh>(null);
   useFrame((state) => {
@@ -202,11 +217,11 @@ function Cursor() {
     if (!t) return;
     const [x, z] = tileCenter(t[0], t[1]);
     m.position.set(x, 0.09, z);
-    m.scale.setScalar(1 + Math.sin(state.clock.elapsedTime * 5) * 0.03);
+    m.scale.setScalar(1 - (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 5)) * 0.04);
   });
   return (
     <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
-      <ringGeometry args={[0.42, 0.5, 4, 1, Math.PI / 4]} />
+      <ringGeometry args={[(0.5 - CURSOR_LINE) * Math.SQRT2 * GRID.cell, 0.5 * Math.SQRT2 * GRID.cell, 4, 1, Math.PI / 4]} />
       <meshBasicMaterial color="#fff8e7" transparent opacity={0.85} depthWrite={false} />
     </mesh>
   );
@@ -215,16 +230,18 @@ function Cursor() {
 export function FarmPlot() {
   const farm = useFarmState();
   const rev = useFarm((s) => s.rev);
-  if (!farm) return <Cursor />;
+  if (!farm)
+    return (
+      <>
+        <FarmFence />
+        <Cursor />
+      </>
+    );
   return (
     <>
+      <FarmFence />
       <Soil farm={farm} rev={rev} />
       <Crops farm={farm} rev={rev} />
-      {PARCELS.filter((p) => !farm.parcels.includes(p.id)).map((p) => {
-        // The fence stands on the edge the parcel shares with the home plot.
-        const edge = p.cols[0] === 0 ? p.cols[1] : p.cols[0];
-        return <ParcelFence key={p.id} x={GRID.x0 + edge * GRID.cell} sign={`${p.price}g · Carpenter`} />;
-      })}
       <Cursor />
     </>
   );

@@ -1,4 +1,5 @@
 import { TERRAIN, type Pt } from './terrain-plan';
+import { SHOP_SPOTS } from './world-layout';
 
 /**
  * Ambient life in Junction: villagers who wander the paths, each wearing its own
@@ -11,7 +12,7 @@ export interface VillagerPlan {
   id: string;
   /** Rigged model (GLB url), built by scripts/build-pack-villager.py. */
   model: string;
-  /** 1 = adult; kids are smaller. */
+  /** 1 = adult (adults spend the evening at the tavern); kids are smaller. */
   scale?: number;
   /** Where they start; they set off from the nearest point of the path network. */
   start: Pt;
@@ -26,6 +27,54 @@ const MERGE = 0.3;
 const JOIN = 1.6;
 /** Radius of the ring the roads meet on round the plaza (clear of the fountain and inside the benches). */
 const PLAZA_RING = 3.8;
+
+/** The tavern's doorstep, where the evening's regulars go in and come back out (a spur off the field road). */
+export const TAVERN_DOOR: Pt = [SHOP_SPOTS.tavern.counter[0], SHOP_SPOTS.tavern.counter[1] + 0.2];
+
+/**
+ * Where the regulars stand inside the tavern, as offsets from the room's centre (see SHOP_ROOMS),
+ * and the point each faces: either side of the table by the fire (the adult villagers, in order),
+ * then the bar (the shopkeepers, see TAVERN_PATRONS), then the east table.
+ */
+export const TAVERN_SPOTS: { at: Pt; look: Pt }[] = [
+  { at: [-2.0, 1.25], look: [-3.8, 1.25] },
+  { at: [-3.8, 1.25], look: [-2.0, 1.25] },
+  { at: [-1.52, -0.85], look: [-1.52, -2.6] },
+  { at: [1.52, -0.85], look: [1.52, -2.6] },
+  { at: [2.25, 1.0], look: [3.1, 0.3] },
+];
+
+/**
+ * Regulars who don't walk the town: Rosa and Bram, done with their shops for the day, come straight
+ * to the tavern and stand at the bar (their spot in TAVERN_SPOTS) for their own hours (`tavernVisit`).
+ */
+export const TAVERN_PATRONS: { id: string; name: string; model: string; spot: number }[] = [
+  { id: 'rosa', name: 'Rosa', model: SHOP_SPOTS.store.model, spot: 2 },
+  { id: 'bram', name: 'Bram', model: SHOP_SPOTS.carpenter.model, spot: 3 },
+];
+
+/** The regulars' evening at the tavern: from 6 PM to 10 PM (in-game minutes since 6:00). */
+export const TAVERN_EVENING = { from: 720, to: 960 };
+
+/**
+ * When a regular heads for the tavern and when they leave, on a given day: random, but the same all
+ * day (and for everyone on the farm, since it comes from the day). They set off between 6 and 7 PM
+ * and leave between 8:45 and 10 PM: even a long walk across town gets them there by about 8, so from
+ * then until 8:45 PM everyone is in at once.
+ */
+export function tavernVisit(id: string, day: string): { go: number; leave: number } {
+  let h = 2166136261;
+  for (const ch of id + '@' + day) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  const rand = () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+  const { from, to } = TAVERN_EVENING;
+  const go = from + Math.round(rand() * 60);
+  const leave = to - 75 + Math.round(rand() * 75);
+  return { go, leave };
+}
 
 /**
  * The network villagers wander: every road, the bridge, and the stepping-stone walkways, as points
@@ -61,6 +110,8 @@ function buildWander() {
     ...TERRAIN.walkways,
     // Across the bridge, between the two ends of the north path.
     [[-4, -11], [-4, -15.2]],
+    // Up from the field road to the tavern's door.
+    [[TAVERN_DOOR[0], 10.5], TAVERN_DOOR],
   ];
   const nodes: Pt[] = [];
   const node = (p: Pt) => {

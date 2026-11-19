@@ -4,7 +4,6 @@ import {
   DAYS_PER_SEASON,
   ITEMS,
   kitItem,
-  PARCELS,
   PIECES,
   SEASONS,
   SLICE_SEASONS,
@@ -17,7 +16,7 @@ import {
   villaTier,
   VILLA_TIERS,
 } from './content';
-import { FARM_GATE, footprint, GRID, inGrid, inHouseArea, inVilla, isOwned, ORCHARD_TREES, placementsAt, tileIndex, underShell, WAKE_TILE } from './farm-map';
+import { CHICKEN_YARD, FARM_GATE, footprint, GRID, HOUSE_ROW_V10, inGrid, inHouseArea, inVilla, isOwned, ORCHARD_TREES, placementsAt, POND_TILE, ROWS_ADDED_NORTH, tileIndex, underShell, WAKE_TILE } from './farm-map';
 import type { Actor, ApplyResult, Bag, Crop, Effect, FarmState, HelpStats, Intent, ItemKey, Placement, Quality, Tile, Tree } from './types';
 
 /**
@@ -29,7 +28,7 @@ import type { Actor, ApplyResult, Bag, Crop, Effect, FarmState, HelpStats, Inten
  * (each player owns their profile); the sim only returns the effects to apply to it.
  */
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 14;
 
 /* ------------------------------------------------------------------ */
 /* A new farm                                                          */
@@ -54,7 +53,6 @@ export function createFarm(owner: string, ownerName: string): FarmState {
     produce: {},
     storage: {},
     bin: {},
-    parcels: [],
     villaTier: 1,
     roofColor: 1,
     help: {},
@@ -66,24 +64,30 @@ export function createFarm(owner: string, ownerName: string): FarmState {
 
   buildStarterHouse(put);
   putYard(put);
-  for (let c = 23; c < 29; c++) for (let r = 12; r < 15; r++) farm.tiles[tileIndex(c, r)].tilled = true;
+  put('pond', ...POND_TILE);
+  for (const [c, r, rot] of chickenYardFence()) put('fence', c, r, rot);
+  for (let c = 23; c < 29; c++) for (let r = 16; r < 19; r++) farm.tiles[tileIndex(c, r)].tilled = true;
   plantStartingTrees(farm);
   return farm;
 }
 
 type Put = (piece: string, c: number, r: number, rot?: number) => void;
 
-/** Wild trees already standing on the home plot and the meadow, to clear or keep. */
+/** Wild trees already standing about the farm, to clear or keep. */
 const WILD_TREES: [string, number, number][] = [
-  ['oak', 11, 2],
-  ['pine', 12, 11],
-  ['oak', 13, 7],
-  ['oak', 25, 4],
-  ['pine', 30, 2],
-  ['pine', 30, 9],
-  ['pine', 35, 3],
-  ['oak', 38, 10],
-  ['pine', 41, 6],
+  ['oak', 11, 6],
+  ['pine', 12, 15],
+  ['oak', 13, 11],
+  ['oak', 25, 8],
+  ['pine', 30, 6],
+  ['pine', 30, 13],
+  ['pine', 31, 7], // (outside the chicken yard's fence)
+  ['oak', 38, 14],
+  ['pine', 41, 10],
+  // Up north, in the rows the farm grew by.
+  ['oak', 9, 1],
+  ['pine', 27, 2],
+  ['oak', 37, 1],
 ];
 
 /** The orchard's old apple trees and the wild ones, grown, wherever their tile is still free. */
@@ -95,6 +99,15 @@ function plantStartingTrees(farm: FarmState) {
     if (!t || t.tilled || t.crop || isBlocked(farm, c, r) || underShell(farm, c, r)) continue;
     farm.trees.push({ id: farm.nextId++, kind, c, r, stage: TREE_GROWN, growth: 0, hits: 0 });
   }
+}
+
+/** The chicken yard's fence: [c, r, rot] edges down its west side and along its south side, gate left open. */
+function chickenYardFence(): [number, number, number][] {
+  const { c0, c1, r0, r1, gate } = CHICKEN_YARD;
+  const edges: [number, number, number][] = [];
+  for (let r = r0; r < r1; r++) edges.push([c0, r, 3]);
+  for (let c = c0; c < c1; c++) if (c !== gate) edges.push([c, r1 - 1, 2]);
+  return edges;
 }
 
 /** Outside the front door: a wide pebble path down to the gate, a lantern, and the shipping bin. */
@@ -184,6 +197,13 @@ export function cropQuality(t: Tile, crop: Crop): Quality {
 
 /** The tree standing on a tile, if any. */
 export const treeAt = (farm: FarmState, c: number, r: number): Tree | undefined => (farm.trees ?? []).find((t) => t.c === c && t.r === r);
+
+/** Fruit to pick on a tree: a grown fruit tree bears a full crop until it's picked. */
+export function fruitOn(tree: Tree): number {
+  const fruit = TREES[tree.kind]?.fruit;
+  if (!fruit || tree.stage < TREE_GROWN) return 0;
+  return tree.fruit ?? fruit.n;
+}
 
 /** Something stands on the tile that farming can't share it with (floors, paths, objects, trees). */
 export function isBlocked(farm: FarmState, c: number, r: number): boolean {
@@ -281,7 +301,7 @@ function gather(farm: FarmState, actor: Actor, item: ItemKey, n: number, effects
   else addTo(farm.storage, item, n);
 }
 
-const HOST_ONLY = new Set<Intent['t']>(['till', 'chop', 'clear', 'withdraw', 'place', 'remove', 'recolor', 'roof', 'buyParcel', 'buyTier', 'buyAnimal', 'tip', 'endDay']);
+const HOST_ONLY = new Set<Intent['t']>(['till', 'chop', 'clear', 'withdraw', 'place', 'remove', 'recolor', 'roof', 'buyTier', 'buyAnimal', 'tip', 'endDay', 'devGrow', 'devFruit']);
 
 export function applyIntent(farm: FarmState, actor: Actor, intent: Intent): ApplyResult {
   if (HOST_ONLY.has(intent.t) && !isHost(farm, actor)) return no('Only the farm’s owner can do that');
@@ -297,8 +317,9 @@ export function applyIntent(farm: FarmState, actor: Actor, intent: Intent): Appl
       // Down it comes: wood by its size, and its seeds (a seedling just comes up whole).
       const def = TREES[tree.kind];
       farm.trees = farm.trees.filter((t) => t !== tree);
+      const wood = def.woodItem ?? 'wood';
       const drops: [string, number][] =
-        tree.stage <= 1 ? [[def.seed, 1]] : tree.stage === 2 ? [['wood', 1]] : tree.stage === 3 ? [['wood', 3], [def.seed, 1]] : [['wood', def.wood], [def.seed, def.seeds]];
+        tree.stage <= 1 ? [[def.seed, 1]] : tree.stage === 2 ? [[wood, 1]] : tree.stage === 3 ? [[wood, 3], [def.seed, 1]] : [[wood, def.wood], [def.seed, def.seeds]];
       for (const [item, n] of drops) effects.push({ e: 'give', who: actor.id, item, n });
       return ok(effects, 'felled');
     }
@@ -363,6 +384,50 @@ export function applyIntent(farm: FarmState, actor: Actor, intent: Intent): Appl
       }
       credit(farm, actor, 'harvested');
       return ok(effects);
+    }
+    case 'pick': {
+      // Fruit off a grown fruit tree (an apple tree): anyone may pick, like harvesting a crop.
+      const tree = treeAt(farm, intent.c, intent.r);
+      const fruit = tree && TREES[tree.kind]?.fruit;
+      if (!tree || !fruit) return no('Nothing to pick here');
+      const n = fruitOn(tree);
+      if (!n) return no('No fruit yet');
+      tree.fruit = 0;
+      tree.fruitNights = 0;
+      gather(farm, actor, fruit.item, n, effects);
+      credit(farm, actor, 'harvested', n);
+      return ok(effects);
+    }
+    case 'devGrow': {
+      // DEV: every crop ripe and every planted tree grown, at once.
+      let n = 0;
+      for (const t of farm.tiles) {
+        if (t.crop && !isRipe(t.crop)) {
+          t.crop.growth = cropDays(t.crop);
+          n++;
+        }
+      }
+      for (const tree of farm.trees ?? []) {
+        if (tree.stage < TREE_GROWN) {
+          tree.stage = TREE_GROWN;
+          tree.growth = 0;
+          n++;
+        }
+      }
+      return n ? ok() : no('Nothing left to grow');
+    }
+    case 'devFruit': {
+      // DEV: every grown fruit tree bears a full crop again.
+      let n = 0;
+      for (const tree of farm.trees ?? []) {
+        const fruit = TREES[tree.kind]?.fruit;
+        if (fruit && tree.stage >= TREE_GROWN && fruitOn(tree) < fruit.n) {
+          tree.fruit = fruit.n;
+          tree.fruitNights = 0;
+          n++;
+        }
+      }
+      return n ? ok() : no('Every fruit tree already has its fruit');
     }
     case 'clear': {
       const t = tile(farm, intent.c, intent.r);
@@ -451,14 +516,6 @@ export function applyIntent(farm: FarmState, actor: Actor, intent: Intent): Appl
       farm.roofColor = intent.color;
       return ok();
     }
-    case 'buyParcel': {
-      const parcel = PARCELS.find((p) => p.id === intent.parcel);
-      if (!parcel) return no('No such land');
-      if (farm.parcels.includes(parcel.id)) return no('Already yours');
-      farm.parcels.push(parcel.id);
-      effects.push({ e: 'gold', who: actor.id, n: -parcel.price });
-      return ok(effects);
-    }
     case 'buyTier': {
       const next = VILLA_TIERS.find((t) => t.tier === intent.tier);
       if (!next || intent.tier !== farm.villaTier + 1) return no('Not available');
@@ -526,6 +583,12 @@ export function endDay(farm: FarmState): Effect[] {
   // Trees grow by themselves, a stage every few nights; half-chopped ones heal.
   for (const tree of farm.trees) {
     tree.hits = 0;
+    // Picked fruit trees bear again after a few nights.
+    const fruit = TREES[tree.kind].fruit;
+    if (fruit && tree.stage >= TREE_GROWN && fruitOn(tree) === 0 && (tree.fruitNights = (tree.fruitNights ?? 0) + 1) >= fruit.nights) {
+      tree.fruit = fruit.n;
+      tree.fruitNights = 0;
+    }
     if (tree.stage >= TREE_GROWN) continue;
     if (++tree.growth >= TREES[tree.kind].nightsPerStage) {
       tree.stage++;
@@ -573,17 +636,22 @@ export function migrateFarm(raw: unknown): FarmState | null {
   if (!raw || typeof raw !== 'object') return null;
   const farm = raw as FarmState;
   if (typeof farm.version !== 'number' || !Array.isArray(farm.tiles)) return null;
+  // v10: the farm grew 4 rows north and all of it is the owner's (no land to buy). Older saves'
+  // rows move down first — the same ground — so every step below works in today's rows.
+  if (farm.version < 10 && farm.tiles.length === GRID.cols * (GRID.rows - ROWS_ADDED_NORTH)) growNorth(farm);
   if (farm.tiles.length !== GRID.cols * GRID.rows) return null;
   // The house moved twice: 7×6 at row 0 (v1), 12×6 at row 1 (v2), now 18×9 at row 1.
   // v3 had it 18×9 on the farm; now the rooms are their own space and the farm has the shell.
-  const OLD_HOUSES: Record<number, [number, number, number, number]> = { 1: [15, 0, 7, 6], 2: [13, 1, 12, 6], 3: [11, 1, 18, 9] };
+  // (Rows as they are since v10.)
+  const OLD_HOUSES: Record<number, [number, number, number, number]> = { 1: [15, 4, 7, 6], 2: [13, 5, 12, 6], 3: [11, 5, 18, 9] };
   if (OLD_HOUSES[farm.version]) {
     rebuildStarterHouse(farm, OLD_HOUSES[farm.version]);
     farm.version = SAVE_VERSION;
   }
   if (farm.version === 4) {
     // v5 made the house smaller outside (12×6 → 8×5): the path now starts a row nearer.
-    const e = villaTier(farm.villaTier).ext;
+    // (Where the house stood then: row 5 in today's rows.)
+    const e = { ...villaTier(farm.villaTier).ext, r: HOUSE_ROW_V10 };
     for (const c of [WAKE_TILE[0]]) {
       for (let r = e.r + e.h; r < e.r + e.h + 2; r++) {
         if (!placementsAt(farm, c, r).some((p) => PIECES[p.piece]?.layer === 'floor') && !farm.tiles[tileIndex(c, r)].tilled) {
@@ -595,7 +663,7 @@ export function migrateFarm(raw: unknown): FarmState | null {
   }
   if (farm.version === 5) {
     // v6: the path to the door is one tile wide again; the second lane's stones go to storage.
-    const e = villaTier(farm.villaTier).ext;
+    const e = { ...villaTier(farm.villaTier).ext, r: HOUSE_ROW_V10 };
     const lane = (p: Placement) => p.piece === 'path' && p.c === WAKE_TILE[0] + 1 && p.r >= e.r + e.h && p.r <= FARM_GATE[1];
     const n = farm.placements.filter(lane).length;
     farm.placements = farm.placements.filter((p) => !lane(p));
@@ -616,7 +684,99 @@ export function migrateFarm(raw: unknown): FarmState | null {
     for (const p of farm.placements) if (p.c >= 88 && p.c < 114) p.c += 72;
     farm.version = 9;
   }
+  if (farm.version === 9) {
+    // v10: no land parcels any more (the rows were grown north above).
+    delete (farm as Partial<FarmState> & { parcels?: string[] }).parcels;
+    farm.version = 10;
+  }
+  if (farm.version === 10) {
+    // v11: the house moved up north to the top of the farm.
+    moveHouseNorth(farm);
+    farm.version = 11;
+  }
+  if (farm.version === 11) {
+    // v12: a pond in the north-east corner, if that ground is still free.
+    const [pc, pr] = POND_TILE;
+    const free = footprint(PIECES.pond, pc, pr, 0).every(([c, r]) => {
+      const t = tile(farm, c, r);
+      return !!t && !t.tilled && !t.crop && !placementsAt(farm, c, r).length && !treeAt(farm, c, r);
+    });
+    if (free) farm.placements.push({ id: farm.nextId++, piece: 'pond', c: pc, r: pr, rot: 0, color: PIECES.pond.color, storey: 0 });
+    farm.version = 12;
+  }
+  if (farm.version === 12) {
+    // v13: the pond's corner is a fenced chicken yard. Fence goes up wherever its edge is free (no
+    // fence or wall there already, and nothing big standing across it).
+    const edgeAt = (c: number, r: number, rot: number) =>
+      placementsAt(farm, c, r).some((p) => PIECES[p.piece]?.layer === 'edge' && p.c === c && p.r === r && p.rot % 4 === rot);
+    const across = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    for (const [c, r, rot] of chickenYardFence()) {
+      const [dc, dr] = across[rot];
+      const opposite = edgeAt(c + dc, r + dr, (rot + 2) % 4);
+      const bigThing = placementsAt(farm, c, r).some((p) => PIECES[p.piece]?.layer === 'object' && placementsAt(farm, c + dc, r + dr).includes(p));
+      if (!edgeAt(c, r, rot) && !opposite && !bigThing) {
+        farm.placements.push({ id: farm.nextId++, piece: 'fence', c, r, rot, color: PIECES.fence.color, storey: 0 });
+      }
+    }
+    farm.version = 13;
+  }
+  if (farm.version === 13) {
+    // v14: a chicken shed in the yard gets a gate in the yard's gap, so its hens stay in.
+    const { c0, c1, r0, r1, gate } = CHICKEN_YARD;
+    const shedInYard = farm.placements.some(
+      (p) => PIECES[p.piece]?.use === 'coop' && footprint(PIECES[p.piece], p.c, p.r, p.rot).every(([c, r]) => c >= c0 && c < c1 && r >= r0 && r < r1),
+    );
+    const gapFree = !placementsAt(farm, gate, r1 - 1).some((p) => PIECES[p.piece]?.layer === 'edge' && p.r === r1 - 1 && p.rot % 4 === 2);
+    if (shedInYard && gapFree) farm.placements.push({ id: farm.nextId++, piece: 'fence-gate', c: gate, r: r1 - 1, rot: 2, color: PIECES['fence-gate'].color, storey: 0 });
+    farm.version = 14;
+  }
   return farm;
+}
+
+/**
+ * Move a v10 house (shell from row 5) up to the top of the farm (row 1): whatever stands where it
+ * now goes is put away (kit into storage, trees and tilled ground cleared; a coop stays, animals
+ * live in it), the starter lantern and shipping bin follow the front door up, and the path to the
+ * gate is laid on up to the new door.
+ */
+function moveHouseNorth(farm: FarmState) {
+  const e = villaTier(farm.villaTier).ext;
+  const oldFront = HOUSE_ROW_V10 + e.h;
+  const newFront = e.r + e.h;
+  const doorC = WAKE_TILE[0];
+  const kept: Placement[] = [];
+  for (const p of farm.placements) {
+    const def = PIECES[p.piece];
+    const under = !!def && inGrid(p.c, p.r) && footprint(def, p.c, p.r, p.rot).some(([c, r]) => underShell(farm, c, r));
+    if (!under || def.use === 'coop') kept.push(p);
+    else if (!def.villa) addTo(farm.storage, kitItem(p.piece), 1);
+  }
+  farm.placements = kept;
+  farm.trees = (farm.trees ?? []).filter((t) => !underShell(farm, t.c, t.r));
+  for (let c = e.c; c < e.c + e.w; c++) for (let r = e.r; r < e.r + e.h; r++) farm.tiles[tileIndex(c, r)] = emptyTile();
+  const free = (c: number, r: number) => !placementsAt(farm, c, r).length && !treeAt(farm, c, r);
+  for (const [piece, dc] of [['lantern', -3], ['shipping-bin', 3]] as const) {
+    const p = farm.placements.find((q) => q.piece === piece && q.c === doorC + dc && q.r === oldFront);
+    if (p && free(doorC + dc, newFront)) p.r = newFront;
+  }
+  for (let r = newFront; r < oldFront; r++) {
+    const floor = placementsAt(farm, doorC, r).some((p) => PIECES[p.piece]?.layer === 'floor');
+    if (!floor && !farm.tiles[tileIndex(doorC, r)].tilled && !treeAt(farm, doorC, r)) {
+      farm.placements.push({ id: farm.nextId++, piece: 'path', c: doorC, r, rot: 0, color: PIECES.path.color, storey: 0 });
+    }
+  }
+}
+
+/**
+ * Give a pre-v10 save the 4 new rows up north: empty tiles in front of the old ones, and everything
+ * standing on the farm (placements, trees) 4 rows further down, so it stays on the same ground. The
+ * house's rooms (off the map) keep their rows.
+ */
+function growNorth(farm: FarmState) {
+  const n = ROWS_ADDED_NORTH;
+  farm.tiles = [...Array.from({ length: GRID.cols * n }, emptyTile), ...farm.tiles];
+  for (const p of farm.placements) if (p.c >= 0 && p.c < GRID.cols) p.r += n;
+  for (const t of farm.trees ?? []) t.r += n;
 }
 
 /**
@@ -653,6 +813,8 @@ function rebuildStarterHouse(farm: FarmState, [oc, or, ow, oh]: [number, number,
   };
   buildStarterHouse(put);
   putYard(put);
+  put('pond', ...POND_TILE);
+  for (const [c, r, rot] of chickenYardFence()) put('fence', c, r, rot);
   for (const [piece, n] of Object.entries(removed)) if (n > 0) addTo(farm.storage, kitItem(piece), n);
 }
 
